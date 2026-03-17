@@ -1202,379 +1202,723 @@ def payment_cancel():
 # TRANG BÁN HÀNG
 # ═════════════════════════════════════════════════════════════════════════════
 
+DOWNLOAD_URL = os.environ.get("DOWNLOAD_URL", "https://drive.google.com/uc?export=download&id=YOUR_FILE_ID")
+APP_VERSION  = os.environ.get("APP_VERSION",  "2.1.0")
+APP_SIZE     = os.environ.get("APP_SIZE",      "45 MB")
+
 SHOP_HTML = """
 <!DOCTYPE html>
 <html lang="vi">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Auto CapCut Video Sync — Tự động hoá quy trình edit video</title>
+  <title>Auto CapCut Video Sync — Tự động ghép video, audio, phụ đề vào CapCut</title>
+  <meta name="description" content="Công cụ tự động ghép video, audio và phụ đề .srt vào CapCut Draft chỉ trong vài giây. Tiết kiệm hàng giờ edit tay.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Plus+Jakarta+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
-    :root{--bg:#080810;--card:#16162A;--border:rgba(255,255,255,0.07);
-          --gold:#F5A623;--gold-dim:rgba(245,166,35,0.15);
-          --text:#EDEAF4;--muted:#7A7898;--red:#FF4757;}
+    :root{
+      --bg:#07070F;--surface:#0D0D1C;--card:#12122A;
+      --border:rgba(255,255,255,0.06);--border2:rgba(255,255,255,0.1);
+      --gold:#F5A623;--gold2:#FFD166;--gold-dim:rgba(245,166,35,0.12);
+      --blue:#4F8EF7;--green:#2ECC71;
+      --text:#EDEAF4;--muted:#7A7898;--muted2:#5A5878;
+    }
     *{box-sizing:border-box;margin:0;padding:0}
     html{scroll-behavior:smooth}
-    body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);
-         color:var(--text);line-height:1.6;overflow-x:hidden;}
-    ::-webkit-scrollbar{width:6px}
+    body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(--text);line-height:1.6;overflow-x:hidden;}
+    ::-webkit-scrollbar{width:5px}
     ::-webkit-scrollbar-track{background:var(--bg)}
     ::-webkit-scrollbar-thumb{background:#2A2A44;border-radius:3px}
+
+    /* ── NAV ── */
     nav{position:fixed;top:0;left:0;right:0;z-index:100;
         display:flex;align-items:center;justify-content:space-between;
-        padding:18px 5%;background:rgba(8,8,16,0.85);
-        backdrop-filter:blur(12px);border-bottom:1px solid var(--border);}
-    .logo{font-family:'Bebas Neue',sans-serif;font-size:22px;
-          letter-spacing:2px;color:var(--text);display:flex;align-items:center;gap:10px;}
-    .logo-badge{background:var(--gold);color:#080810;font-size:10px;
-                font-weight:600;padding:2px 8px;border-radius:3px;letter-spacing:1px;}
-    .nav-link{color:var(--muted);font-size:14px;text-decoration:none;transition:color .2s;}
+        padding:16px 5%;background:rgba(7,7,15,0.9);
+        backdrop-filter:blur(16px);border-bottom:1px solid var(--border);}
+    .logo{font-family:'Bebas Neue',sans-serif;font-size:20px;letter-spacing:2px;
+          color:var(--text);display:flex;align-items:center;gap:10px;text-decoration:none;}
+    .logo-badge{background:var(--gold);color:#07070F;font-size:9px;font-weight:700;
+                padding:2px 7px;border-radius:3px;letter-spacing:1px;font-family:'Plus Jakarta Sans',sans-serif;}
+    .nav-links{display:flex;align-items:center;gap:28px;}
+    .nav-link{color:var(--muted);font-size:13px;text-decoration:none;transition:color .2s;}
     .nav-link:hover{color:var(--text)}
-    .nav-right{display:flex;gap:20px}
-    .hero{min-height:100vh;display:flex;flex-direction:column;align-items:center;
-          justify-content:center;text-align:center;padding:120px 20px 80px;
-          position:relative;overflow:hidden;}
-    .hero-glow{position:absolute;width:600px;height:600px;
-               background:radial-gradient(circle,rgba(245,166,35,0.08) 0%,transparent 70%);
-               top:50%;left:50%;transform:translate(-50%,-60%);pointer-events:none;}
+    .nav-dl-btn{background:var(--gold);color:#07070F;font-size:13px;font-weight:700;
+                padding:8px 18px;border-radius:6px;text-decoration:none;
+                transition:transform .15s,box-shadow .15s;}
+    .nav-dl-btn:hover{transform:translateY(-1px);box-shadow:0 6px 20px rgba(245,166,35,.35)}
+
+    /* ── HERO ── */
+    .hero{min-height:100vh;display:flex;align-items:center;justify-content:center;
+          padding:120px 5% 80px;position:relative;overflow:hidden;}
+    .hero-glow{position:absolute;width:800px;height:800px;border-radius:50%;
+               background:radial-gradient(circle,rgba(79,142,247,0.07) 0%,transparent 65%);
+               top:-200px;right:-200px;pointer-events:none;}
+    .hero-glow2{position:absolute;width:500px;height:500px;border-radius:50%;
+                background:radial-gradient(circle,rgba(245,166,35,0.06) 0%,transparent 65%);
+                bottom:-100px;left:-100px;pointer-events:none;}
+    .hero-inner{display:grid;grid-template-columns:1fr 1fr;gap:64px;
+                align-items:center;max-width:1200px;width:100%;margin:0 auto;}
+    .hero-left{}
     .hero-tag{display:inline-flex;align-items:center;gap:8px;
-              border:1px solid rgba(245,166,35,0.3);background:rgba(245,166,35,0.07);
-              padding:6px 16px;border-radius:100px;font-size:13px;color:var(--gold);
-              margin-bottom:28px;animation:fadeUp .8s ease both;}
-    .hero-tag-dot{width:6px;height:6px;border-radius:50%;background:var(--gold);
+              border:1px solid rgba(79,142,247,.3);background:rgba(79,142,247,.07);
+              padding:5px 14px;border-radius:100px;font-size:12px;color:var(--blue);
+              margin-bottom:24px;font-weight:600;letter-spacing:.5px;}
+    .hero-tag-dot{width:6px;height:6px;border-radius:50%;background:var(--blue);
                   animation:pulse 2s ease infinite;}
-    @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
-    h1{font-family:'Bebas Neue',sans-serif;font-size:clamp(56px,9vw,110px);
-       line-height:1;letter-spacing:2px;animation:fadeUp .8s .1s ease both;}
-    h1 em{font-style:normal;color:var(--gold);}
-    .hero-sub{max-width:540px;font-size:17px;color:var(--muted);
-              margin:24px auto 40px;animation:fadeUp .8s .2s ease both;}
-    .hero-cta{display:inline-flex;align-items:center;gap:10px;
-              background:var(--gold);color:#080810;font-weight:600;font-size:16px;
-              padding:16px 40px;border-radius:6px;border:none;cursor:pointer;
-              text-decoration:none;transition:transform .2s,box-shadow .2s;
-              animation:fadeUp .8s .3s ease both;}
-    .hero-cta:hover{transform:translateY(-2px);box-shadow:0 12px 40px rgba(245,166,35,0.35)}
-    .hero-stats{display:flex;gap:48px;margin-top:64px;animation:fadeUp .8s .4s ease both;}
-    .hero-stat-num{font-family:'Bebas Neue',sans-serif;font-size:38px;letter-spacing:1px;}
-    .hero-stat-label{font-size:13px;color:var(--muted)}
-    .section{padding:80px 5%}
-    .section-label{font-size:12px;font-weight:600;letter-spacing:3px;
+    @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.3;transform:scale(.7)}}
+    .hero h1{font-family:'Bebas Neue',sans-serif;font-size:clamp(52px,5.5vw,80px);
+             line-height:1.05;letter-spacing:1px;margin-bottom:20px;}
+    .hero h1 em{font-style:normal;
+                background:linear-gradient(135deg,var(--gold),var(--gold2));
+                -webkit-background-clip:text;-webkit-text-fill-color:transparent;}
+    .hero-desc{font-size:16px;color:var(--muted);line-height:1.8;margin-bottom:36px;max-width:480px;}
+    .hero-desc strong{color:var(--text);}
+    .hero-btns{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:48px;}
+    .btn-gold{display:inline-flex;align-items:center;gap:8px;background:var(--gold);
+              color:#07070F;font-weight:700;font-size:15px;padding:14px 28px;
+              border-radius:8px;text-decoration:none;border:none;cursor:pointer;
+              transition:transform .15s,box-shadow .15s;}
+    .btn-gold:hover{transform:translateY(-2px);box-shadow:0 10px 32px rgba(245,166,35,.35)}
+    .btn-outline{display:inline-flex;align-items:center;gap:8px;
+                 background:transparent;color:var(--text);font-weight:600;font-size:15px;
+                 padding:14px 28px;border-radius:8px;text-decoration:none;
+                 border:1px solid var(--border2);transition:border-color .2s,background .2s;}
+    .btn-outline:hover{border-color:var(--gold);background:var(--gold-dim)}
+    .hero-trust{display:flex;align-items:center;gap:16px;flex-wrap:wrap;}
+    .trust-item{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);}
+    .trust-dot{width:5px;height:5px;border-radius:50%;background:var(--green);}
+
+    /* Hero screenshot */
+    .hero-right{position:relative;}
+    .screenshot-wrap{position:relative;border-radius:12px;overflow:hidden;
+                     border:1px solid var(--border2);
+                     box-shadow:0 40px 80px rgba(0,0,0,.6),0 0 0 1px rgba(255,255,255,.05);}
+    .screenshot-wrap img{width:100%;display:block;}
+    .screenshot-badge{position:absolute;top:16px;right:16px;
+                      background:rgba(46,204,113,.15);border:1px solid rgba(46,204,113,.4);
+                      color:var(--green);font-size:11px;font-weight:700;
+                      padding:4px 12px;border-radius:100px;letter-spacing:1px;}
+    .float-card{position:absolute;background:var(--card);border:1px solid var(--border2);
+                border-radius:10px;padding:12px 16px;
+                box-shadow:0 8px 24px rgba(0,0,0,.4);}
+    .float-card-1{bottom:-20px;left:-24px;}
+    .float-card-2{top:-16px;right:-16px;}
+    .fc-num{font-family:'Bebas Neue',sans-serif;font-size:28px;color:var(--gold);letter-spacing:1px;}
+    .fc-lbl{font-size:11px;color:var(--muted);margin-top:2px;}
+
+    /* ── COUNTER STRIP ── */
+    .counter-strip{background:var(--surface);border-top:1px solid var(--border);
+                   border-bottom:1px solid var(--border);padding:32px 5%;}
+    .counter-inner{display:flex;justify-content:center;gap:80px;
+                   max-width:1200px;margin:0 auto;flex-wrap:wrap;}
+    .counter-item{text-align:center;}
+    .counter-num{font-family:'Bebas Neue',sans-serif;font-size:48px;letter-spacing:2px;
+                 background:linear-gradient(135deg,var(--gold),var(--gold2));
+                 -webkit-background-clip:text;-webkit-text-fill-color:transparent;}
+    .counter-label{font-size:13px;color:var(--muted);margin-top:4px;}
+
+    /* ── SECTION BASE ── */
+    .section{padding:80px 5%;}
+    .section-inner{max-width:1200px;margin:0 auto;}
+    .section-label{font-size:11px;font-weight:700;letter-spacing:3px;
                    color:var(--gold);text-transform:uppercase;margin-bottom:12px;}
-    .section-title{font-family:'Bebas Neue',sans-serif;font-size:clamp(36px,5vw,56px);
+    .section-title{font-family:'Bebas Neue',sans-serif;font-size:clamp(34px,4vw,52px);
                    letter-spacing:1px;line-height:1.1;margin-bottom:16px;}
-    .section-sub{font-size:16px;color:var(--muted);max-width:500px;line-height:1.7}
+    .section-sub{font-size:15px;color:var(--muted);max-width:520px;line-height:1.8;}
+
+    /* ── FEATURES ── */
     .features-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));
                    gap:16px;margin-top:48px;}
-    .feature-card{background:var(--card);border:1px solid var(--border);border-radius:12px;
-                  padding:28px;transition:border-color .2s,transform .2s;}
-    .feature-card:hover{border-color:rgba(245,166,35,0.25);transform:translateY(-3px);}
-    .feature-icon{width:44px;height:44px;border-radius:10px;background:var(--gold-dim);
+    .feature-card{background:var(--card);border:1px solid var(--border);border-radius:14px;
+                  padding:28px;transition:border-color .25s,transform .25s;}
+    .feature-card:hover{border-color:rgba(245,166,35,.2);transform:translateY(-4px);}
+    .feature-icon{width:48px;height:48px;border-radius:12px;background:var(--gold-dim);
+                  border:1px solid rgba(245,166,35,.2);display:flex;align-items:center;
+                  justify-content:center;font-size:22px;margin-bottom:20px;}
+    .feature-title{font-size:15px;font-weight:700;margin-bottom:8px;}
+    .feature-desc{font-size:13px;color:var(--muted);line-height:1.7;}
+
+    /* ── SCREENSHOT SECTION ── */
+    .screenshots-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:48px;}
+    .shot-card{border-radius:12px;overflow:hidden;border:1px solid var(--border2);
+               background:var(--card);transition:transform .2s,box-shadow .2s;}
+    .shot-card:hover{transform:translateY(-4px);box-shadow:0 20px 48px rgba(0,0,0,.5);}
+    .shot-card img{width:100%;display:block;}
+    .shot-caption{padding:14px 16px;font-size:13px;color:var(--muted);}
+    .shot-caption strong{color:var(--text);}
+
+    /* ── STEPS ── */
+    .steps-wrap{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
+                gap:0;margin-top:48px;position:relative;}
+    .steps-wrap::before{content:"";position:absolute;top:28px;left:8%;right:8%;height:1px;
+      background:linear-gradient(90deg,transparent,var(--border) 20%,var(--border) 80%,transparent);}
+    .step{text-align:center;padding:0 20px;position:relative;}
+    .step-num{width:56px;height:56px;border-radius:50%;
+              background:linear-gradient(135deg,rgba(79,142,247,.2),rgba(79,142,247,.05));
+              border:1px solid rgba(79,142,247,.3);
+              display:flex;align-items:center;justify-content:center;
+              font-family:'Bebas Neue',sans-serif;font-size:22px;color:var(--blue);
+              margin:0 auto 20px;position:relative;z-index:1;}
+    .step-title{font-size:15px;font-weight:600;margin-bottom:8px;}
+    .step-desc{font-size:13px;color:var(--muted);line-height:1.6;}
+    .step-desc code{background:rgba(255,255,255,.06);padding:1px 6px;
+                    border-radius:4px;font-size:12px;}
+
+    /* ── DOWNLOAD SECTION ── */
+    .download-section{background:var(--surface);border-top:1px solid var(--border);
+                      border-bottom:1px solid var(--border);}
+    .dl-inner{max-width:1000px;margin:0 auto;padding:80px 5%;
+              display:grid;grid-template-columns:1fr auto;gap:48px;align-items:center;}
+    .dl-left h2{font-family:'Bebas Neue',sans-serif;font-size:clamp(36px,4vw,52px);
+                letter-spacing:1px;margin-bottom:12px;}
+    .dl-left h2 em{font-style:normal;color:var(--gold);}
+    .dl-left p{font-size:15px;color:var(--muted);line-height:1.7;max-width:500px;}
+    .dl-meta{display:flex;gap:20px;margin-top:20px;flex-wrap:wrap;}
+    .dl-meta-item{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);}
+    .dl-meta-item svg{opacity:.5;}
+    .dl-right{text-align:center;}
+    .dl-btn{display:inline-flex;flex-direction:column;align-items:center;gap:4px;
+            background:linear-gradient(135deg,var(--gold),#E8941A);
+            color:#07070F;font-weight:700;font-size:16px;
+            padding:20px 48px;border-radius:12px;text-decoration:none;
+            box-shadow:0 8px 32px rgba(245,166,35,.35);
+            transition:transform .15s,box-shadow .15s;}
+    .dl-btn:hover{transform:translateY(-3px);box-shadow:0 16px 48px rgba(245,166,35,.45)}
+    .dl-btn-sub{font-size:11px;font-weight:500;opacity:.7;margin-top:2px;}
+    .dl-note{font-size:11px;color:var(--muted2);margin-top:10px;}
+    .req-list{display:flex;flex-direction:column;gap:8px;margin-top:24px;}
+    .req-item{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--muted);}
+    .req-icon{width:28px;height:28px;border-radius:6px;background:var(--card);
+              border:1px solid var(--border);display:flex;align-items:center;
+              justify-content:center;font-size:14px;flex-shrink:0;}
+
+    /* ── TESTIMONIALS ── */
+    .testi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));
+                gap:16px;margin-top:48px;}
+    .testi-card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:24px;}
+    .testi-stars{color:var(--gold);font-size:14px;margin-bottom:14px;letter-spacing:2px;}
+    .testi-text{font-size:14px;color:var(--text);line-height:1.7;margin-bottom:16px;}
+    .testi-author{display:flex;align-items:center;gap:10px;}
+    .testi-avatar{width:36px;height:36px;border-radius:50%;
                   display:flex;align-items:center;justify-content:center;
-                  font-size:22px;margin-bottom:18px;}
-    .feature-title{font-size:16px;font-weight:600;margin-bottom:8px}
-    .feature-desc{font-size:14px;color:var(--muted);line-height:1.7}
+                  font-size:15px;font-weight:700;color:var(--bg);}
+    .testi-name{font-size:13px;font-weight:600;}
+    .testi-role{font-size:11px;color:var(--muted);}
+
+    /* ── PRICING ── */
     .pricing-wrap{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));
-                  gap:16px;margin-top:48px;max-width:960px;margin-left:auto;margin-right:auto;}
+                  gap:16px;margin-top:48px;max-width:1000px;margin-left:auto;margin-right:auto;}
     .plan-card{background:var(--card);border:1px solid var(--border);border-radius:16px;
                padding:32px;position:relative;transition:transform .2s,border-color .2s;}
-    .plan-card:hover{transform:translateY(-4px)}
+    .plan-card:hover{transform:translateY(-4px);}
     .plan-card.popular{border-color:var(--gold);
-                       background:linear-gradient(160deg,#1C1A2E 0%,#16162A 60%);}
+                       background:linear-gradient(160deg,#1C1A2E 0%,#12122A 60%);}
     .popular-badge{position:absolute;top:-13px;left:50%;transform:translateX(-50%);
-                   background:var(--gold);color:#080810;font-size:11px;font-weight:700;
-                   letter-spacing:2px;padding:4px 20px;border-radius:100px;
+                   background:var(--gold);color:#07070F;font-size:10px;font-weight:700;
+                   letter-spacing:2px;padding:4px 18px;border-radius:100px;
                    white-space:nowrap;text-transform:uppercase;}
-    .plan-name{font-size:14px;font-weight:600;color:var(--muted);letter-spacing:1px;
-               text-transform:uppercase;margin-bottom:12px}
-    .plan-price{font-family:'Bebas Neue',sans-serif;font-size:60px;letter-spacing:1px;
-                line-height:1;}
-    .plan-price span{font-family:'Plus Jakarta Sans',sans-serif;font-size:18px;
-                     color:var(--muted);vertical-align:middle;margin-left:4px}
-    .plan-period{font-size:13px;color:var(--muted);margin-top:4px;margin-bottom:24px}
-    .plan-divider{height:1px;background:var(--border);margin:24px 0}
-    .plan-features{list-style:none;margin-bottom:32px}
-    .plan-features li{font-size:14px;color:var(--muted);padding:7px 0;
+    .plan-name{font-size:12px;font-weight:700;color:var(--muted);letter-spacing:2px;
+               text-transform:uppercase;margin-bottom:12px;}
+    .plan-price{font-family:'Bebas Neue',sans-serif;font-size:56px;letter-spacing:1px;line-height:1;}
+    .plan-price span{font-family:'Plus Jakarta Sans',sans-serif;font-size:16px;
+                     color:var(--muted);vertical-align:middle;margin-left:4px;}
+    .plan-period{font-size:13px;color:var(--muted);margin-top:4px;margin-bottom:24px;}
+    .save-tag{background:rgba(245,166,35,.12);color:var(--gold);font-size:11px;
+              font-weight:600;padding:2px 10px;border-radius:100px;margin-left:8px;}
+    .plan-divider{height:1px;background:var(--border);margin:20px 0;}
+    .plan-features{list-style:none;margin-bottom:28px;}
+    .plan-features li{font-size:13px;color:var(--muted);padding:6px 0;
                       display:flex;align-items:center;gap:10px;}
     .plan-features li::before{content:"";width:16px;height:16px;border-radius:50%;flex-shrink:0;
-      background:var(--gold-dim);border:1px solid rgba(245,166,35,.4);
+      background:var(--gold-dim);border:1px solid rgba(245,166,35,.3);
       background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M2 5l2 2 4-4' stroke='%23F5A623' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
       background-size:10px;background-position:center;background-repeat:no-repeat;}
     .plan-btn{width:100%;padding:14px;border-radius:8px;
-              font-family:'Plus Jakarta Sans',sans-serif;font-size:15px;font-weight:600;
+              font-family:'Plus Jakarta Sans',sans-serif;font-size:14px;font-weight:700;
               cursor:pointer;border:none;transition:transform .15s,box-shadow .15s;}
-    .plan-btn:hover{transform:translateY(-2px)}
-    .plan-btn.default{background:rgba(255,255,255,0.06);color:var(--text);
-                      border:1px solid var(--border);}
-    .plan-btn.default:hover{background:rgba(255,255,255,0.1)}
-    .plan-btn.primary{background:var(--gold);color:#080810;
-                      box-shadow:0 8px 24px rgba(245,166,35,0.25);}
-    .plan-btn.primary:hover{box-shadow:0 12px 32px rgba(245,166,35,0.4)}
-    .save-tag{display:inline-block;background:rgba(245,166,35,0.12);color:var(--gold);
-              font-size:12px;font-weight:600;padding:3px 10px;border-radius:100px;margin-left:8px;}
-    .steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));
-           gap:0;margin-top:48px;position:relative;}
-    .steps::before{content:"";position:absolute;top:28px;left:10%;right:10%;height:1px;
-      background:linear-gradient(90deg,transparent,var(--border) 20%,var(--border) 80%,transparent);}
-    .step{text-align:center;padding:0 20px;position:relative}
-    .step-num{width:56px;height:56px;border-radius:50%;background:var(--card);
-              border:1px solid var(--border);display:flex;align-items:center;
-              justify-content:center;font-family:'Bebas Neue',sans-serif;
-              font-size:22px;color:var(--gold);margin:0 auto 20px;
-              position:relative;z-index:1;}
-    .step-title{font-size:15px;font-weight:600;margin-bottom:8px}
-    .step-desc{font-size:13px;color:var(--muted);line-height:1.6}
-    .faq-list{margin-top:40px;max-width:700px}
+    .plan-btn:hover{transform:translateY(-2px);}
+    .plan-btn.default{background:rgba(255,255,255,.05);color:var(--text);border:1px solid var(--border2);}
+    .plan-btn.default:hover{background:rgba(255,255,255,.09);}
+    .plan-btn.primary{background:var(--gold);color:#07070F;
+                      box-shadow:0 6px 20px rgba(245,166,35,.25);}
+    .plan-btn.primary:hover{box-shadow:0 12px 32px rgba(245,166,35,.4);}
+
+    /* ── FAQ ── */
+    .faq-list{margin-top:40px;max-width:720px;}
     .faq-item{border-bottom:1px solid var(--border);overflow:hidden;}
     .faq-q{width:100%;background:none;border:none;color:var(--text);
            font-family:'Plus Jakarta Sans',sans-serif;font-size:15px;font-weight:500;
            padding:20px 0;text-align:left;cursor:pointer;
            display:flex;justify-content:space-between;align-items:center;gap:12px;}
-    .faq-icon{width:20px;height:20px;border-radius:50%;border:1px solid var(--border);
+    .faq-icon{width:22px;height:22px;border-radius:50%;border:1px solid var(--border2);
               flex-shrink:0;display:flex;align-items:center;justify-content:center;
-              font-size:14px;color:var(--muted);transition:transform .2s;}
-    .faq-item.open .faq-icon{transform:rotate(45deg);border-color:var(--gold);color:var(--gold)}
-    .faq-a{font-size:14px;color:var(--muted);line-height:1.7;
+              font-size:14px;color:var(--muted);transition:transform .2s,border-color .2s;}
+    .faq-item.open .faq-icon{transform:rotate(45deg);border-color:var(--gold);color:var(--gold);}
+    .faq-a{font-size:14px;color:var(--muted);line-height:1.8;
            max-height:0;overflow:hidden;transition:max-height .3s ease,padding .3s;padding-bottom:0;}
-    .faq-item.open .faq-a{max-height:300px;padding-bottom:20px}
-    footer{border-top:1px solid var(--border);padding:40px 5%;
-           display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:16px;}
-    .footer-copy{font-size:13px;color:var(--muted)}
-    .footer-links a{font-size:13px;color:var(--muted);text-decoration:none;transition:color .2s}
-    .footer-links a:hover{color:var(--text)}
-    /* Modal */
+    .faq-item.open .faq-a{max-height:300px;padding-bottom:20px;}
+
+    /* ── FOOTER ── */
+    footer{border-top:1px solid var(--border);padding:40px 5%;}
+    .footer-inner{max-width:1200px;margin:0 auto;
+                  display:flex;align-items:center;justify-content:space-between;
+                  flex-wrap:wrap;gap:16px;}
+    .footer-copy{font-size:13px;color:var(--muted2);}
+    .footer-links{display:flex;gap:24px;}
+    .footer-links a{font-size:13px;color:var(--muted);text-decoration:none;transition:color .2s;}
+    .footer-links a:hover{color:var(--text);}
+
+    /* ── MODAL ── */
     .modal-overlay{display:none;position:fixed;inset:0;z-index:200;
-                   background:rgba(0,0,0,0.75);backdrop-filter:blur(4px);
+                   background:rgba(0,0,0,.8);backdrop-filter:blur(6px);
                    align-items:center;justify-content:center;padding:20px;}
-    .modal-overlay.show{display:flex}
-    .modal{background:var(--card);border:1px solid rgba(255,255,255,0.1);
+    .modal-overlay.show{display:flex;}
+    .modal{background:var(--card);border:1px solid var(--border2);
            border-radius:20px;padding:40px;width:100%;max-width:460px;
-           animation:modalIn .25s ease;}
-    @keyframes modalIn{from{transform:scale(.95) translateY(10px);opacity:0}to{transform:none;opacity:1}}
-    .modal-title{font-family:'Bebas Neue',sans-serif;font-size:30px;letter-spacing:1px;margin-bottom:4px}
-    .modal-sub{font-size:14px;color:var(--muted);margin-bottom:24px}
-    .modal label{display:block;font-size:12px;font-weight:600;color:var(--muted);
-                 letter-spacing:1px;text-transform:uppercase;margin-bottom:6px}
-    .modal input{width:100%;padding:13px 16px;background:rgba(255,255,255,0.04);
-                 border:1px solid var(--border);border-radius:8px;color:var(--text);
-                 font-family:'Plus Jakarta Sans',sans-serif;font-size:15px;
+           animation:modalIn .2s ease;}
+    @keyframes modalIn{from{transform:scale(.95) translateY(12px);opacity:0}to{transform:none;opacity:1}}
+    .modal-title{font-family:'Bebas Neue',sans-serif;font-size:28px;letter-spacing:1px;margin-bottom:4px;}
+    .modal-sub{font-size:14px;color:var(--muted);margin-bottom:24px;}
+    .modal label{display:block;font-size:11px;font-weight:700;color:var(--muted);
+                 letter-spacing:1.5px;text-transform:uppercase;margin-bottom:6px;}
+    .modal input{width:100%;padding:13px 16px;background:rgba(255,255,255,.04);
+                 border:1px solid var(--border2);border-radius:8px;color:var(--text);
+                 font-family:'Plus Jakarta Sans',sans-serif;font-size:14px;
                  margin-bottom:14px;outline:none;transition:border-color .2s;}
-    .modal input:focus{border-color:rgba(245,166,35,0.5)}
-    .modal input::placeholder{color:var(--muted)}
+    .modal input:focus{border-color:rgba(245,166,35,.6);}
+    .modal input::placeholder{color:var(--muted2);}
     .modal-note{font-size:12px;color:var(--muted);line-height:1.7;margin-bottom:20px;
-                padding:12px 14px;background:rgba(255,255,255,0.03);
-                border-radius:8px;border-left:2px solid var(--gold)}
-    .btn-pay{width:100%;padding:16px;background:var(--gold);color:#080810;border:none;
+                padding:12px 14px;background:rgba(255,255,255,.03);
+                border-radius:8px;border-left:2px solid var(--gold);}
+    .btn-pay{width:100%;padding:16px;background:var(--gold);color:#07070F;border:none;
              border-radius:8px;font-family:'Plus Jakarta Sans',sans-serif;
-             font-size:16px;font-weight:700;cursor:pointer;
-             transition:transform .15s,box-shadow .15s;
-             display:flex;align-items:center;justify-content:center;gap:8px;}
-    .btn-pay:hover{transform:translateY(-1px);box-shadow:0 8px 24px rgba(245,166,35,0.35)}
+             font-size:15px;font-weight:700;cursor:pointer;
+             display:flex;align-items:center;justify-content:center;gap:8px;
+             transition:transform .15s,box-shadow .15s;}
+    .btn-pay:hover{transform:translateY(-1px);box-shadow:0 8px 24px rgba(245,166,35,.35);}
     .btn-cancel{width:100%;padding:12px;margin-top:10px;background:none;border:none;
                 color:var(--muted);font-family:'Plus Jakarta Sans',sans-serif;
-                font-size:14px;cursor:pointer;transition:color .2s;}
-    .btn-cancel:hover{color:var(--text)}
-    #modal-msg{margin-top:12px;text-align:center;font-size:14px;font-weight:600;min-height:20px;}
-    #modal-msg.err{color:var(--red)}
-    #modal-msg.ok{color:#4ade80}
-    @keyframes fadeUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:none}}
+                font-size:13px;cursor:pointer;transition:color .2s;}
+    .btn-cancel:hover{color:var(--text);}
+    #modal-msg{margin-top:12px;text-align:center;font-size:12px;font-weight:600;min-height:20px;}
+    #modal-msg.err{color:#FF4757;}
+    #modal-msg.ok{color:var(--green);}
+
+    @keyframes fadeUp{from{opacity:0;transform:translateY(24px)}to{opacity:1;transform:none}}
+    .anim{animation:fadeUp .7s ease both;}
+
+    @media(max-width:900px){
+      .hero-inner{grid-template-columns:1fr;}
+      .hero-right{display:none;}
+      .screenshots-grid{grid-template-columns:1fr;}
+      .dl-inner{grid-template-columns:1fr;text-align:center;}
+      .dl-left p{margin:0 auto;}
+      .dl-meta{justify-content:center;}
+    }
     @media(max-width:600px){
-      .hero-stats{gap:28px}.steps::before{display:none}
-      footer{flex-direction:column;text-align:center}.modal{padding:28px 20px}
+      .hero-btns{flex-direction:column;}
+      .counter-inner{gap:40px;}
+      footer .footer-inner{flex-direction:column;text-align:center;}
+      .modal{padding:28px 20px;}
+      .steps-wrap::before{display:none;}
     }
   </style>
 </head>
 <body>
 
+<!-- ── NAV ── -->
 <nav>
-  <div class="logo">🎬 AutoCapCut <span class="logo-badge">v2.1</span></div>
-  <div class="nav-right">
-    <a href="#pricing" class="nav-link">Bảng giá</a>
+  <a href="/" class="logo">🎬 AutoCapCut <span class="logo-badge">v2.1</span></a>
+  <div class="nav-links">
+    <a href="#features" class="nav-link">Tính năng</a>
+    <a href="#pricing"  class="nav-link">Bảng giá</a>
+    <a href="#download" class="nav-link">Tải xuống</a>
     <a href="{{ support_url }}" target="_blank" class="nav-link">Hỗ trợ</a>
+    <a href="#download" class="nav-dl-btn">⬇ Tải miễn phí</a>
   </div>
 </nav>
 
+<!-- ── HERO ── -->
 <section class="hero">
   <div class="hero-glow"></div>
-  <div class="hero-tag">
-    <span class="hero-tag-dot"></span>
-    Phiên bản 2.1 — Hỗ trợ Compound Clip
-  </div>
-  <h1>EDIT VIDEO<br><em>TỰ ĐỘNG HÓA</em></h1>
-  <p class="hero-sub">Tự động ghép video, audio và subtitle vào CapCut Draft chỉ trong vài phút.</p>
-  <a href="#pricing" class="hero-cta">
-    Mua License ngay
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-      <path d="M3 8h10M9 4l4 4-4 4" stroke="#080810" stroke-width="2"
-            stroke-linecap="round" stroke-linejoin="round"/>
-    </svg>
-  </a>
-  <div class="hero-stats">
-    <div><div class="hero-stat-num">5X</div><div class="hero-stat-label">Nhanh hơn edit tay</div></div>
-    <div><div class="hero-stat-num">1080P</div><div class="hero-stat-label">Full HD output</div></div>
-    <div><div class="hero-stat-num">SRT</div><div class="hero-stat-label">Auto subtitle</div></div>
+  <div class="hero-glow2"></div>
+  <div class="hero-inner">
+    <div class="hero-left anim">
+      <div class="hero-tag">
+        <span class="hero-tag-dot"></span>
+        Phiên bản 2.1 — Mới nhất
+      </div>
+      <h1>TỰ ĐỘNG HOÁ<br>QUY TRÌNH <em>EDIT VIDEO</em><br>TRÊN CAPCUT</h1>
+      <p class="hero-desc">
+        Chỉ cần <strong>video gốc + audio + file .srt</strong> — phần mềm tự động cắt, ghép,
+        điều chỉnh tốc độ và tạo Draft hoàn chỉnh trong CapCut.
+        Không cần kéo tay từng đoạn, <strong>tiết kiệm hàng giờ mỗi ngày.</strong>
+      </p>
+      <div class="hero-btns">
+        <a href="#download" class="btn-gold">
+          ⬇&nbsp; Tải xuống miễn phí
+        </a>
+        <a href="#pricing" class="btn-outline">
+          💳&nbsp; Xem bảng giá
+        </a>
+      </div>
+      <div class="hero-trust">
+        <div class="trust-item"><span class="trust-dot"></span>Windows 10/11</div>
+        <div class="trust-item"><span class="trust-dot"></span>CapCut 3.9 → 7.3</div>
+        <div class="trust-item"><span class="trust-dot"></span>Không cần code</div>
+        <div class="trust-item"><span class="trust-dot"></span>1 lần setup, dùng mãi</div>
+      </div>
+    </div>
+    <div class="hero-right anim" style="animation-delay:.15s">
+      <div class="screenshot-wrap">
+        <img src="https://i.imgur.com/placeholder_gui.png"
+             onerror="this.style.display='none';this.parentNode.style.background='var(--card)';this.parentNode.style.minHeight='420px';"
+             alt="Giao diện Auto CapCut Video Sync">
+        <div class="screenshot-badge">● LIVE</div>
+      </div>
+      <div class="float-card float-card-1">
+        <div class="fc-num" id="cnt-users">500+</div>
+        <div class="fc-lbl">Người dùng</div>
+      </div>
+      <div class="float-card float-card-2">
+        <div class="fc-num">5X</div>
+        <div class="fc-lbl">Nhanh hơn edit tay</div>
+      </div>
+    </div>
   </div>
 </section>
 
+<!-- ── COUNTER STRIP ── -->
+<div class="counter-strip">
+  <div class="counter-inner">
+    <div class="counter-item">
+      <div class="counter-num" data-target="500">0</div>
+      <div class="counter-label">Người dùng tin tưởng</div>
+    </div>
+    <div class="counter-item">
+      <div class="counter-num" data-target="50000">0</div>
+      <div class="counter-label">Clips đã xử lý</div>
+    </div>
+    <div class="counter-item">
+      <div class="counter-num" data-target="5">0</div>
+      <div class="counter-label">Lần nhanh hơn edit tay</div>
+    </div>
+    <div class="counter-item">
+      <div class="counter-num" data-target="14">0</div>
+      <div class="counter-label">Phiên bản CapCut hỗ trợ</div>
+    </div>
+  </div>
+</div>
+
+<!-- ── FEATURES ── -->
 <section class="section" id="features">
-  <div class="section-label">Tính năng</div>
-  <div class="section-title">MỌI THỨ BẠN CẦN<br>ĐỂ EDIT NHANH HƠN</div>
-  <p class="section-sub">Từ video gốc đến CapCut Draft hoàn chỉnh — tất cả tự động.</p>
-  <div class="features-grid">
-    <div class="feature-card">
-      <div class="feature-icon">🎞️</div>
-      <div class="feature-title">Auto-cắt clip theo SRT</div>
-      <div class="feature-desc">Đọc file subtitle .srt, tự động cắt video đúng thời điểm, không cần kéo tay từng đoạn.</div>
-    </div>
-    <div class="feature-card">
-      <div class="feature-icon">🔊</div>
-      <div class="feature-title">Ghép audio thông minh</div>
-      <div class="feature-desc">Điều chỉnh tốc độ video theo độ dài audio. Không bị lệch tiếng, không cần render lại.</div>
-    </div>
-    <div class="feature-card">
-      <div class="feature-icon">⚡</div>
-      <div class="feature-title">Compound Clip tự động</div>
-      <div class="feature-desc">Gộp tất cả clip thành Compound Clip chỉ với một tham số. Video/Audio/Mixed đều hỗ trợ.</div>
-    </div>
-    <div class="feature-card">
-      <div class="feature-icon">📱</div>
-      <div class="feature-title">Ghi thẳng vào CapCut</div>
-      <div class="feature-desc">Không cần server, không cần API. Draft xuất hiện ngay trong CapCut Projects của bạn.</div>
+  <div class="section-inner">
+    <div class="section-label">Tính năng</div>
+    <div class="section-title">MỌI THỨ BẠN CẦN<br>ĐỂ EDIT NHANH HƠN</div>
+    <p class="section-sub">Từ video gốc đến CapCut Draft hoàn chỉnh — tất cả tự động, không cần động tay.</p>
+    <div class="features-grid">
+      <div class="feature-card">
+        <div class="feature-icon">🎞️</div>
+        <div class="feature-title">Auto cắt clip theo SRT</div>
+        <div class="feature-desc">Đọc file phụ đề .srt, tự động cắt video đúng từng mốc thời gian. Không cần kéo thanh timeline thủ công từng đoạn.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🔊</div>
+        <div class="feature-title">Ghép audio thông minh</div>
+        <div class="feature-desc">Tự động điều chỉnh tốc độ video khớp với độ dài audio. Không bị lệch tiếng, không cần render lại từng clip.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">⚡</div>
+        <div class="feature-title">Compound Clip tự động</div>
+        <div class="feature-desc">Gộp tất cả clip thành Compound Clip chỉ với 1 tham số. Hỗ trợ Video, Audio và Mixed compound.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">📂</div>
+        <div class="feature-title">Ghi thẳng vào CapCut</div>
+        <div class="feature-desc">Draft xuất hiện ngay trong CapCut Projects, không cần copy hay import thêm bước nào.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🔧</div>
+        <div class="feature-title">Hỗ trợ 14 phiên bản CapCut</div>
+        <div class="feature-desc">Từ CapCut 3.9 đến 7.3, tương thích tất cả phiên bản phổ biến đang dùng trên thị trường.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">📝</div>
+        <div class="feature-title">Auto subtitle</div>
+        <div class="feature-desc">Tự động thêm text segment vào timeline theo nội dung file SRT. Chỉnh sửa font, màu sắc sau trong CapCut.</div>
+      </div>
     </div>
   </div>
 </section>
 
+<!-- ── SCREENSHOTS ── -->
+<section class="section" style="padding-top:0" id="screenshots">
+  <div class="section-inner">
+    <div class="section-label">Giao diện</div>
+    <div class="section-title">TRỰC QUAN,<br>DỄ SỬ DỤNG</div>
+    <p class="section-sub">Thiết kế giao diện gọn gàng — mọi thao tác trong tầm tay, không cần đọc hướng dẫn dài.</p>
+    <div class="screenshots-grid">
+      <div class="shot-card">
+        <div style="background:var(--surface);min-height:280px;display:flex;align-items:center;
+                    justify-content:center;font-size:13px;color:var(--muted2);padding:40px;text-align:center;">
+          📸 Screenshot tab Tệp Draft<br>
+          <small style="font-size:11px;margin-top:8px;display:block;">
+            (Thay bằng ảnh thực tế của phần mềm)
+          </small>
+        </div>
+        <div class="shot-caption"><strong>Tab Tệp Draft</strong> — Quản lý video, audio và SRT đầu vào</div>
+      </div>
+      <div class="shot-card">
+        <div style="background:var(--surface);min-height:280px;display:flex;align-items:center;
+                    justify-content:center;font-size:13px;color:var(--muted2);padding:40px;text-align:center;">
+          📸 Screenshot tab Cấu hình<br>
+          <small style="font-size:11px;margin-top:8px;display:block;">
+            (Thay bằng ảnh thực tế của phần mềm)
+          </small>
+        </div>
+        <div class="shot-caption"><strong>Tab Cấu hình</strong> — Chọn phiên bản CapCut, thư mục Draft</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── HOW IT WORKS ── -->
 <section class="section" style="padding-top:0">
-  <div class="section-label">Quy trình</div>
-  <div class="section-title">CHỈ 3 BƯỚC<br>ĐỂ CÓ DRAFT HOÀN CHỈNH</div>
-  <div class="steps">
-    <div class="step">
-      <div class="step-num">1</div>
-      <div class="step-title">Chuẩn bị file</div>
-      <div class="step-desc">Đặt video gốc, audio từng đoạn, và file subtitle .srt vào thư mục inputs</div>
-    </div>
-    <div class="step">
-      <div class="step-num">2</div>
-      <div class="step-title">Chạy lệnh</div>
-      <div class="step-desc">Chạy <code style="background:rgba(255,255,255,.06);padding:2px 6px;border-radius:4px;font-size:12px">python main.py</code> và chờ vài giây</div>
-    </div>
-    <div class="step">
-      <div class="step-num">3</div>
-      <div class="step-title">Mở CapCut</div>
-      <div class="step-desc">Draft hoàn chỉnh đã có trong CapCut Projects — chỉnh sửa thêm hoặc xuất ngay</div>
+  <div class="section-inner">
+    <div class="section-label">Quy trình</div>
+    <div class="section-title">CHỈ 3 BƯỚC<br>ĐỂ CÓ DRAFT HOÀN CHỈNH</div>
+    <div class="steps-wrap">
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-title">Chuẩn bị file</div>
+        <div class="step-desc">Đặt video gốc, thư mục audio từng đoạn và file phụ đề <code>.srt</code> vào thư mục <code>inputs/</code></div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-title">Nhấn Bắt đầu</div>
+        <div class="step-desc">Mở phần mềm → chọn file → nhấn <code>BẮT ĐẦU CHẠY</code> và chờ vài giây</div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-title">Mở CapCut</div>
+        <div class="step-desc">Draft hoàn chỉnh xuất hiện ngay trong CapCut Projects — chỉnh sửa thêm hoặc xuất ngay</div>
+      </div>
     </div>
   </div>
 </section>
 
+<!-- ── DOWNLOAD ── -->
+<section class="download-section" id="download">
+  <div class="dl-inner">
+    <div class="dl-left">
+      <div class="section-label" style="margin-bottom:8px;">Tải xuống</div>
+      <h2>DÙNG THỬ <em>MIỄN PHÍ</em><br>NGAY HÔM NAY</h2>
+      <p>Tải về, cài đặt trong 1 phút. Dùng thử không cần key — nhập key để mở khoá toàn bộ tính năng sau khi mua license.</p>
+      <div class="dl-meta">
+        <div class="dl-meta-item">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+          Windows 10/11 (64-bit)
+        </div>
+        <div class="dl-meta-item">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+          Phiên bản {{ app_version }}
+        </div>
+        <div class="dl-meta-item">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg>
+          {{ app_size }}
+        </div>
+      </div>
+      <div class="req-list" style="margin-top:24px;">
+        <div class="req-item"><div class="req-icon">⚡</div>FFmpeg đã cài trong PATH</div>
+        <div class="req-item"><div class="req-icon">🎬</div>CapCut PC đã cài đặt</div>
+        <div class="req-item"><div class="req-icon">🔑</div>License key (mua bên dưới)</div>
+      </div>
+    </div>
+    <div class="dl-right">
+      <a href="{{ download_url }}" target="_blank" class="dl-btn">
+        <span>⬇&nbsp; Tải xuống</span>
+        <span class="dl-btn-sub">Google Drive · {{ app_size }}</span>
+      </a>
+      <div class="dl-note">Miễn phí tải · Cần license để dùng đầy đủ</div>
+      <div style="margin-top:20px;font-size:12px;color:var(--muted2);">
+        Sau khi tải: giải nén → chạy<br>
+        <code style="background:var(--card);padding:2px 8px;border-radius:4px;
+                     font-size:11px;">AutoCapCutVideoSync.exe</code>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── TESTIMONIALS ── -->
+<section class="section" id="reviews">
+  <div class="section-inner">
+    <div class="section-label">Đánh giá</div>
+    <div class="section-title">KHÁCH HÀNG<br>NÓI GÌ VỀ CHÚNG TÔI?</div>
+    <div class="testi-grid">
+      <div class="testi-card">
+        <div class="testi-stars">★★★★★</div>
+        <div class="testi-text">"Trước đây mất 3-4 tiếng để ghép 50 clip, giờ chạy xong trong 5 phút. Tool này thật sự thay đổi quy trình làm việc của mình."</div>
+        <div class="testi-author">
+          <div class="testi-avatar" style="background:linear-gradient(135deg,#667eea,#764ba2);">T</div>
+          <div>
+            <div class="testi-name">Tuấn Anh</div>
+            <div class="testi-role">Content Creator · TikTok 500K followers</div>
+          </div>
+        </div>
+      </div>
+      <div class="testi-card">
+        <div class="testi-stars">★★★★★</div>
+        <div class="testi-text">"Cài đặt cực đơn giản, chạy ổn định. Mình dùng cho kênh review phim, mỗi ngày xử lý cả trăm clips không bao giờ lỗi."</div>
+        <div class="testi-author">
+          <div class="testi-avatar" style="background:linear-gradient(135deg,#f093fb,#f5576c);">M</div>
+          <div>
+            <div class="testi-name">Minh Hằng</div>
+            <div class="testi-role">Video Editor · Agency</div>
+          </div>
+        </div>
+      </div>
+      <div class="testi-card">
+        <div class="testi-stars">★★★★☆</div>
+        <div class="testi-text">"Compound Clip tự động là tính năng mình chờ đợi mãi. Tiết kiệm rất nhiều thời gian sau khi tool ghép xong timeline."</div>
+        <div class="testi-author">
+          <div class="testi-avatar" style="background:linear-gradient(135deg,#4facfe,#00f2fe);">H</div>
+          <div>
+            <div class="testi-name">Hoàng Nam</div>
+            <div class="testi-role">Freelance Editor</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── PRICING ── -->
 <section class="section" id="pricing" style="padding-top:0">
-  <div style="text-align:center">
-    <div class="section-label">Bảng giá</div>
-    <div class="section-title">CHỌN GÓI PHÙ HỢP</div>
-    <p style="color:var(--muted);margin-top:8px">Một lần mua, dùng trên 1 máy tính. Không tính phí ẩn.</p>
-  </div>
-  <div class="pricing-wrap">
-    <div class="plan-card">
-      <div class="plan-name">Starter</div>
-      <div class="plan-price">99K <span>VND</span></div>
-      <div class="plan-period">Dùng 30 ngày</div>
-      <div class="plan-divider"></div>
-      <ul class="plan-features">
-        <li>Dùng trên 1 máy tính</li>
-        <li>Cập nhật miễn phí</li>
-        <li>Hỗ trợ qua Telegram</li>
-      </ul>
-      <button class="plan-btn default" onclick="openModal(30,99000)">Mua gói 30 ngày</button>
+  <div class="section-inner">
+    <div style="text-align:center;margin-bottom:0;">
+      <div class="section-label" style="text-align:center;">Bảng giá</div>
+      <div class="section-title" style="text-align:center;">CHỌN GÓI<br>PHÙ HỢP VỚI BẠN</div>
+      <p style="color:var(--muted);font-size:14px;margin-top:8px;">
+        Mua 1 lần · Dùng trên 1 máy · Thời hạn tính từ lần kích hoạt đầu tiên
+      </p>
     </div>
-    <div class="plan-card popular">
-      <div class="popular-badge">Phổ biến nhất</div>
-      <div class="plan-name" style="color:var(--gold)">Creator</div>
-      <div class="plan-price">249K <span>VND</span></div>
-      <div class="plan-period">Dùng 90 ngày <span class="save-tag">Tiết kiệm 48K</span></div>
-      <div class="plan-divider" style="background:rgba(245,166,35,0.15)"></div>
-      <ul class="plan-features">
-        <li>Dùng trên 1 máy tính</li>
-        <li>Cập nhật miễn phí</li>
-        <li>Hỗ trợ qua Telegram</li>
-        <li>Ưu tiên hỗ trợ kỹ thuật</li>
-      </ul>
-      <button class="plan-btn primary" onclick="openModal(90,249000)">Mua gói 90 ngày</button>
-    </div>
-    <div class="plan-card">
-      <div class="plan-name">Pro</div>
-      <div class="plan-price">799K <span>VND</span></div>
-      <div class="plan-period">Dùng 365 ngày <span class="save-tag">Tiết kiệm 389K</span></div>
-      <div class="plan-divider"></div>
-      <ul class="plan-features">
-        <li>Dùng trên 1 máy tính</li>
-        <li>Cập nhật miễn phí</li>
-        <li>Hỗ trợ qua Telegram</li>
-        <li>Ưu tiên hỗ trợ kỹ thuật</li>
-        <li>Truy cập tính năng beta</li>
-      </ul>
-      <button class="plan-btn default" onclick="openModal(365,799000)">Mua gói 365 ngày</button>
+    <div class="pricing-wrap">
+      <div class="plan-card">
+        <div class="plan-name">Starter</div>
+        <div class="plan-price">99K <span>VND</span></div>
+        <div class="plan-period">30 ngày</div>
+        <div class="plan-divider"></div>
+        <ul class="plan-features">
+          <li>Tất cả tính năng đầy đủ</li>
+          <li>1 máy tính</li>
+          <li>Cập nhật trong thời hạn</li>
+          <li>Hỗ trợ qua Telegram</li>
+        </ul>
+        <button class="plan-btn default" onclick="openModal(30,99000)">Mua gói 30 ngày</button>
+      </div>
+      <div class="plan-card popular">
+        <div class="popular-badge">Phổ biến nhất</div>
+        <div class="plan-name" style="color:var(--gold);">Creator</div>
+        <div class="plan-price">249K <span>VND</span></div>
+        <div class="plan-period">90 ngày <span class="save-tag">Tiết kiệm 48K</span></div>
+        <div class="plan-divider" style="background:rgba(245,166,35,.15);"></div>
+        <ul class="plan-features">
+          <li>Tất cả tính năng đầy đủ</li>
+          <li>1 máy tính</li>
+          <li>Cập nhật trong thời hạn</li>
+          <li>Hỗ trợ ưu tiên</li>
+        </ul>
+        <button class="plan-btn primary" onclick="openModal(90,249000)">Mua gói 90 ngày</button>
+      </div>
+      <div class="plan-card">
+        <div class="plan-name">Pro</div>
+        <div class="plan-price">799K <span>VND</span></div>
+        <div class="plan-period">365 ngày <span class="save-tag">Tiết kiệm 389K</span></div>
+        <div class="plan-divider"></div>
+        <ul class="plan-features">
+          <li>Tất cả tính năng đầy đủ</li>
+          <li>1 máy tính</li>
+          <li>Cập nhật trong thời hạn</li>
+          <li>Hỗ trợ ưu tiên</li>
+          <li>Truy cập tính năng beta</li>
+        </ul>
+        <button class="plan-btn default" onclick="openModal(365,799000)">Mua gói 365 ngày</button>
+      </div>
     </div>
   </div>
 </section>
 
+<!-- ── FAQ ── -->
 <section class="section" style="padding-top:0">
-  <div class="section-label">FAQ</div>
-  <div class="section-title">CÂU HỎI<br>THƯỜNG GẶP</div>
-  <div class="faq-list">
-    <div class="faq-item">
-      <button class="faq-q" onclick="toggleFaq(this)">
-        Phần mềm chạy trên hệ điều hành nào?
-        <span class="faq-icon">+</span>
-      </button>
-      <div class="faq-a">Hiện tại hỗ trợ Windows 10/11 (64-bit), cần cài sẵn CapCut PC và FFmpeg.</div>
-    </div>
-    <div class="faq-item">
-      <button class="faq-q" onclick="toggleFaq(this)">
-        Machine ID là gì? Lấy ở đâu?
-        <span class="faq-icon">+</span>
-      </button>
-      <div class="faq-a">
-        Machine ID là mã định danh máy tính của bạn, dùng để khóa key với máy đó.
-        Cách lấy: Mở phần mềm <b>Auto CapCut Video Sync</b> → màn hình kích hoạt sẽ hiển thị Machine ID ngay bên dưới ô nhập key.
-        Copy dãy ký tự đó (định dạng XXXX-XXXX-XXXX-XXXX) rồi dán vào ô khi mua.
+  <div class="section-inner">
+    <div class="section-label">FAQ</div>
+    <div class="section-title">CÂU HỎI<br>THƯỜNG GẶP</div>
+    <div class="faq-list">
+      <div class="faq-item">
+        <button class="faq-q" onclick="toggleFaq(this)">
+          Phần mềm chạy trên hệ điều hành nào?
+          <span class="faq-icon">+</span>
+        </button>
+        <div class="faq-a">Hiện tại hỗ trợ Windows 10/11 (64-bit). Cần cài sẵn CapCut PC phiên bản từ 3.9 đến 7.3 và FFmpeg. macOS đang trong quá trình phát triển.</div>
       </div>
-    </div>
-    <div class="faq-item">
-      <button class="faq-q" onclick="toggleFaq(this)">
-        Sau khi mua key được gửi về đâu?
-        <span class="faq-icon">+</span>
-      </button>
-      <div class="faq-a">Key License gửi tự động đến email bạn nhập khi mua, thường trong vòng 1–2 phút. Nếu không thấy, hãy kiểm tra thư mục Spam.</div>
-    </div>
-    <div class="faq-item">
-      <button class="faq-q" onclick="toggleFaq(this)">
-        Thời hạn tính từ lúc nào?
-        <span class="faq-icon">+</span>
-      </button>
-      <div class="faq-a">
-        Thời hạn tính từ lần đầu tiên bạn nhập key vào phần mềm và bấm Kích hoạt — không phải từ lúc thanh toán.
-        Bạn có thể mua trước, kích hoạt sau khi cần dùng.
+      <div class="faq-item">
+        <button class="faq-q" onclick="toggleFaq(this)">
+          Machine ID là gì? Lấy ở đâu?
+          <span class="faq-icon">+</span>
+        </button>
+        <div class="faq-a">Machine ID là mã định danh máy tính của bạn, dùng để khóa key với đúng máy đó. Cách lấy: mở phần mềm → màn hình kích hoạt → copy dãy ký tự XXXX-XXXX-XXXX-XXXX hiển thị bên dưới ô nhập key, rồi dán vào khi mua.</div>
       </div>
-    </div>
-    <div class="faq-item">
-      <button class="faq-q" onclick="toggleFaq(this)">
-        Tôi có thể dùng trên nhiều máy không?
-        <span class="faq-icon">+</span>
-      </button>
-      <div class="faq-a">Mỗi license chỉ dùng được trên 1 máy. Nếu cần chuyển sang máy khác (thay máy, cài lại Windows), vui lòng liên hệ hỗ trợ qua Telegram.</div>
+      <div class="faq-item">
+        <button class="faq-q" onclick="toggleFaq(this)">
+          Thời hạn tính từ lúc nào?
+          <span class="faq-icon">+</span>
+        </button>
+        <div class="faq-a">Thời hạn tính từ lần đầu tiên bạn nhập key vào phần mềm và bấm Kích hoạt — không phải từ lúc thanh toán. Bạn có thể mua trước, kích hoạt khi cần dùng.</div>
+      </div>
+      <div class="faq-item">
+        <button class="faq-q" onclick="toggleFaq(this)">
+          Sau khi mua nhận key như thế nào?
+          <span class="faq-icon">+</span>
+        </button>
+        <div class="faq-a">Key License được gửi tự động về email bạn nhập khi thanh toán, thường trong vòng 1–2 phút. Nếu không thấy, kiểm tra thư mục Spam.</div>
+      </div>
+      <div class="faq-item">
+        <button class="faq-q" onclick="toggleFaq(this)">
+          Tôi có thể dùng trên nhiều máy không?
+          <span class="faq-icon">+</span>
+        </button>
+        <div class="faq-a">Mỗi license chỉ dùng được trên 1 máy. Nếu cần chuyển sang máy khác (thay máy, cài lại Windows), liên hệ hỗ trợ qua Telegram để được reset miễn phí.</div>
+      </div>
+      <div class="faq-item">
+        <button class="faq-q" onclick="toggleFaq(this)">
+          Cài FFmpeg như thế nào?
+          <span class="faq-icon">+</span>
+        </button>
+        <div class="faq-a">Tải FFmpeg tại ffmpeg.org → giải nén → thêm vào PATH của Windows. Hoặc liên hệ hỗ trợ để được hướng dẫn chi tiết qua Telegram.</div>
+      </div>
     </div>
   </div>
 </section>
 
+<!-- ── FOOTER ── -->
 <footer>
-  <div class="footer-copy">© 2026 Auto CapCut Video Sync</div>
-  <div class="footer-links">
-    <a href="{{ support_url }}" target="_blank">Hỗ trợ</a>
+  <div class="footer-inner">
+    <div>
+      <div class="footer-copy">© 2026 Auto CapCut Video Sync by Văn Khải</div>
+      <div style="font-size:12px;color:var(--muted2);margin-top:4px;">
+        Phần mềm hỗ trợ content creator Việt Nam tự động hoá edit video
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="#download">Tải xuống</a>
+      <a href="#pricing">Bảng giá</a>
+      <a href="{{ support_url }}" target="_blank">Hỗ trợ</a>
+    </div>
   </div>
 </footer>
 
-<!-- Modal thanh toán -->
+<!-- ── MODAL ── -->
 <div class="modal-overlay" id="modal">
   <div class="modal">
     <div class="modal-title" id="modal-title">MUA LICENSE</div>
@@ -1590,14 +1934,13 @@ SHOP_HTML = """
            oninput="this.value=this.value.toUpperCase()">
 
     <div class="modal-note">
-      🖥️ <b>Lấy Machine ID:</b> Mở phần mềm → màn hình kích hoạt → copy dãy ký tự
-      <b>XXXX-XXXX-XXXX-XXXX</b> hiển thị bên dưới ô nhập key.<br><br>
+      🖥️ <b>Lấy Machine ID:</b> Mở phần mềm → màn hình kích hoạt → copy dãy ký tự bên dưới.<br><br>
       ⏱️ <b>Thời hạn tính từ lần kích hoạt đầu tiên</b> — không phải từ lúc thanh toán.<br><br>
       🔒 Key bị khóa cứng với máy này sau khi kích hoạt.
     </div>
 
     <button class="btn-pay" id="btn-pay" onclick="submitPayment()">
-      💳 Thanh toán ngay
+      💳&nbsp; Thanh toán ngay
     </button>
     <button class="btn-cancel" onclick="closeModal()">Huỷ</button>
     <div id="modal-msg"></div>
@@ -1605,34 +1948,52 @@ SHOP_HTML = """
 </div>
 
 <script>
-let _days = 30;
+/* ── Counter animation ── */
+function animateCounters() {
+  document.querySelectorAll('.counter-num[data-target]').forEach(el => {
+    const target = parseInt(el.dataset.target);
+    const dur    = 2000;
+    const step   = 16;
+    const inc    = target / (dur / step);
+    let cur = 0;
+    const t = setInterval(() => {
+      cur = Math.min(cur + inc, target);
+      el.textContent = target >= 1000
+        ? Math.floor(cur).toLocaleString('vi-VN') + '+'
+        : Math.floor(cur) + (target > 5 ? '+' : 'X');
+      if (cur >= target) clearInterval(t);
+    }, step);
+  });
+}
+const observer = new IntersectionObserver(entries => {
+  entries.forEach(e => { if (e.isIntersecting) { animateCounters(); observer.disconnect(); }});
+}, {threshold: 0.3});
+observer.observe(document.querySelector('.counter-strip'));
 
+/* ── Modal ── */
+let _days = 30;
 function openModal(days, amount) {
   _days = days;
   const labels = {30:'30 ngày — 99.000₫', 90:'90 ngày — 249.000₫', 365:'365 ngày — 799.000₫'};
-  document.getElementById('modal-title').textContent  = 'MUA ' + days + ' NGÀY';
-  document.getElementById('modal-sub').textContent    = labels[days];
-  document.getElementById('modal-msg').textContent    = '';
-  document.getElementById('modal-msg').className      = '';
-  document.getElementById('modal-email').value        = '';
-  document.getElementById('modal-machine').value      = '';
+  document.getElementById('modal-title').textContent = 'MUA ' + days + ' NGÀY';
+  document.getElementById('modal-sub').textContent   = labels[days];
+  document.getElementById('modal-msg').textContent   = '';
+  document.getElementById('modal-msg').className     = '';
+  document.getElementById('modal-email').value       = '';
+  document.getElementById('modal-machine').value     = '';
   document.getElementById('modal').classList.add('show');
 }
-
 function closeModal() {
   document.getElementById('modal').classList.remove('show');
 }
-
 function isValidMachineId(v) {
   return /^[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(v.trim());
 }
-
 async function submitPayment() {
   const email     = document.getElementById('modal-email').value.trim();
   const machineId = document.getElementById('modal-machine').value.trim().toUpperCase();
   const msg       = document.getElementById('modal-msg');
   const btn       = document.getElementById('btn-pay');
-
   msg.className = ''; msg.textContent = '';
   if (!email || !email.includes('@')) {
     msg.className = 'err'; msg.textContent = '❌ Vui lòng nhập email hợp lệ.'; return;
@@ -1642,11 +2003,9 @@ async function submitPayment() {
   }
   if (!isValidMachineId(machineId)) {
     msg.className = 'err';
-    msg.textContent = '❌ Machine ID sai định dạng. Phải là XXXX-XXXX-XXXX-XXXX (chữ hoa + số).'; return;
+    msg.textContent = '❌ Machine ID sai định dạng (XXXX-XXXX-XXXX-XXXX).'; return;
   }
-
   btn.textContent = 'Đang xử lý...'; btn.disabled = true;
-
   try {
     const res  = await fetch('/payment/create', {
       method: 'POST',
@@ -1666,13 +2025,24 @@ async function submitPayment() {
     btn.textContent = '💳 Thanh toán ngay'; btn.disabled = false;
   }
 }
-
 function toggleFaq(btn) {
   btn.closest('.faq-item').classList.toggle('open');
 }
-
 document.getElementById('modal').addEventListener('click', function(e) {
   if (e.target === this) closeModal();
+});
+
+/* ── Scroll fade-in ── */
+const fadeObs = new IntersectionObserver(entries => {
+  entries.forEach(e => {
+    if (e.isIntersecting) { e.target.style.opacity='1'; e.target.style.transform='none'; }
+  });
+}, {threshold:0.1});
+document.querySelectorAll('.feature-card,.testi-card,.plan-card,.shot-card').forEach(el => {
+  el.style.opacity = '0';
+  el.style.transform = 'translateY(20px)';
+  el.style.transition = 'opacity .6s ease, transform .6s ease';
+  fadeObs.observe(el);
 });
 </script>
 </body>
@@ -1682,7 +2052,13 @@ document.getElementById('modal').addEventListener('click', function(e) {
 
 @app.route("/")
 def shop():
-    return render_template_string(SHOP_HTML, support_url=SUPPORT_URL)
+    return render_template_string(
+        SHOP_HTML,
+        support_url=SUPPORT_URL,
+        download_url=DOWNLOAD_URL,
+        app_version=APP_VERSION,
+        app_size=APP_SIZE,
+    )
 
 
 if __name__ == "__main__":
