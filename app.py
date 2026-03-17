@@ -38,7 +38,7 @@ PRICE_90D  = 249_000
 PRICE_365D = 799_000
 
 PRODUCT_NAME = "Auto CapCut Video Sync"
-SUPPORT_URL  = "https://t.me/vankhaidev"   # ← thay link hỗ trợ của bạn
+SUPPORT_URL  = "https://t.me/VanKhaiAI"   # ← thay link hỗ trợ của bạn
 SHOP_URL     = "https://autocapcut-production.up.railway.app"     # ← thay link shop của bạn
 
 
