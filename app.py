@@ -1,21 +1,3 @@
-"""
-server/app.py — License Server cho Auto CapCut Video Sync
-Stack: Flask + SQLite + PayOS (VN) + Gmail SMTP
-Deploy: Railway.app hoặc Render.com (miễn phí)
-
-Cài đặt:
-    pip install flask payos requests
-
-Biến môi trường cần set trên Railway/Render:
-    SECRET_KEY        — Khóa bí mật Flask
-    GMAIL_USER        — Gmail dùng để gửi key
-    GMAIL_APP_PASS    — App Password của Gmail (https://myaccount.google.com/apppasswords)
-    PAYOS_CLIENT_ID   — Lấy từ dashboard.payos.vn
-    PAYOS_API_KEY     — Lấy từ dashboard.payos.vn
-    PAYOS_CHECKSUM    — Lấy từ dashboard.payos.vn
-    ADMIN_PASSWORD    — Mật khẩu vào trang /admin
-"""
-
 import hmac
 import hashlib
 import json
