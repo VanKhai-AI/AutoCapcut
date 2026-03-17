@@ -71,6 +71,7 @@ def init_db():
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
                 order_code  TEXT UNIQUE NOT NULL,
                 email       TEXT NOT NULL,
+                machine_id  TEXT DEFAULT NULL,
                 days        INTEGER NOT NULL,
                 amount      INTEGER NOT NULL,
                 status      TEXT NOT NULL DEFAULT 'pending',
@@ -79,6 +80,11 @@ def init_db():
                 key_sent    TEXT DEFAULT NULL
             );
         """)
+        # Migration an toàn: thêm cột machine_id cho DB cũ chưa có
+        try:
+            conn.execute("ALTER TABLE orders ADD COLUMN machine_id TEXT DEFAULT NULL")
+        except Exception:
+            pass  # cột đã tồn tại → bỏ qua
     log.info("Database khởi tạo xong: %s", DB_PATH)
 
 
@@ -382,13 +388,20 @@ ADMIN_HTML = """
     <h2>Tạo key thủ công</h2>
     <div class="form-row">
       <input type="email" name="email" id="inp-email" placeholder="Email khách hàng">
+      <input type="text" id="inp-machine"
+             placeholder="Machine ID (tuỳ chọn)"
+             style="width:210px;font-family:Consolas,monospace;font-size:13px;">
       <select id="inp-days">
         <option value="30">30 ngày</option>
         <option value="90">90 ngày</option>
         <option value="365">365 ngày</option>
       </select>
-      <input type="text" id="inp-note" placeholder="Ghi chú (tuỳ chọn)" style="width:160px;">
+      <input type="text" id="inp-note" placeholder="Ghi chú" style="width:140px;">
       <button class="btn btn-primary" onclick="createKey()">Tạo & Gửi Email</button>
+    </div>
+    <div style="font-size:12px;color:#888;margin-top:8px;">
+      💡 Nếu nhập Machine ID, key sẽ bị khóa cứng với máy đó ngay khi tạo.
+      Để trống nếu khách sẽ kích hoạt tự do lần đầu.
     </div>
     <div id="msg"></div>
   </div>
@@ -439,10 +452,11 @@ ADMIN_HTML = """
 
 <script>
 async function createKey() {
-  const email = document.getElementById('inp-email').value.trim();
-  const days  = document.getElementById('inp-days').value;
-  const note  = document.getElementById('inp-note').value.trim();
-  const msg   = document.getElementById('msg');
+  const email     = document.getElementById('inp-email').value.trim();
+  const machineId = (document.getElementById('inp-machine').value || '').trim().toUpperCase();
+  const days      = document.getElementById('inp-days').value;
+  const note      = document.getElementById('inp-note').value.trim();
+  const msg       = document.getElementById('msg');
   msg.className = ''; msg.textContent = '';
 
   if (!email || !email.includes('@')) {
@@ -454,17 +468,27 @@ async function createKey() {
     const res  = await fetch('/admin/create_key', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ email, days: parseInt(days), note })
+      body: JSON.stringify({
+        email,
+        days: parseInt(days),
+        note,
+        machine_id: machineId || null
+      })
     });
     const data = await res.json();
     if (data.status === 'ok') {
+      const lockInfo = data.machine_locked
+        ? `🔒 Đã khóa với machine: <b>${data.machine_locked}</b>`
+        : '🔓 Chưa khóa machine (khách tự kích hoạt)';
       msg.className = 'ok';
       msg.innerHTML = `✅ Key: <b style="letter-spacing:2px;color:#007BFF;">${data.key}</b>
         <button class="copy-btn" onclick="copyText('${data.key}')">copy</button>
-        — ${data.email_sent ? '📧 Email đã gửi.' : '⚠️ Gửi email thất bại — hãy gửi key thủ công!'}`;
-      document.getElementById('inp-email').value = '';
-      document.getElementById('inp-note').value  = '';
-      setTimeout(() => location.reload(), 3000);
+        &nbsp;|&nbsp; ${data.email_sent ? '📧 Email đã gửi.' : '⚠️ Gửi email thất bại — copy key thủ công!'}
+        &nbsp;|&nbsp; ${lockInfo}`;
+      document.getElementById('inp-email').value   = '';
+      document.getElementById('inp-machine').value = '';
+      document.getElementById('inp-note').value    = '';
+      setTimeout(() => location.reload(), 4000);
     } else {
       msg.className = 'err';
       msg.textContent = '❌ Lỗi: ' + (data.msg || JSON.stringify(data));
@@ -527,20 +551,33 @@ def admin_panel():
 @app.route("/admin/create_key", methods=["POST"])
 @admin_required
 def admin_create_key():
-    data  = request.get_json(silent=True) or {}
-    email = (data.get("email") or "").strip().lower()
-    days  = int(data.get("days", 30))
-    note  = (data.get("note") or "").strip()
+    import re
+    data       = request.get_json(silent=True) or {}
+    email      = (data.get("email") or "").strip().lower()
+    days       = int(data.get("days", 30))
+    note       = (data.get("note") or "").strip()
+    machine_id = (data.get("machine_id") or "").strip().upper() or None
 
     if not email or "@" not in email:
         return jsonify({"status": "error", "msg": "Email không hợp lệ"}), 400
     if days not in (30, 90, 365):
         return jsonify({"status": "error", "msg": "Số ngày không hợp lệ"}), 400
+    if machine_id and not re.fullmatch(r"[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}", machine_id):
+        return jsonify({"status": "error", "msg": "Machine ID không đúng định dạng (XXXX-XXXX-XXXX-XXXX)"}), 400
 
     key = _create_license(email=email, days=days,
-                          notes=note or f"Admin tạo thủ công")
+                          notes=note or "Admin tạo thủ công")
 
-    # Gửi email — không crash server nếu thất bại
+    # Gán machine_id ngay nếu admin cung cấp
+    if machine_id:
+        with get_db() as conn:
+            conn.execute(
+                "UPDATE licenses SET machine_id=?, activated_at=? WHERE key=?",
+                (machine_id, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), key),
+            )
+        log.info("Admin pre-lock key '%s' → machine '%s'", key, machine_id)
+
+    # Gửi email
     email_sent = False
     try:
         email_sent = _send_key_email(email, key, days)
@@ -548,9 +585,10 @@ def admin_create_key():
         log.error("Gửi email thất bại (key vẫn được tạo): %s", e)
 
     return jsonify({
-        "status":     "ok",
-        "key":        key,
-        "email_sent": email_sent,
+        "status":         "ok",
+        "key":            key,
+        "email_sent":     email_sent,
+        "machine_locked": machine_id,
     })
 
 
@@ -651,15 +689,20 @@ def _payos_checksum(data: dict) -> str:
 
 @app.route("/payment/create", methods=["POST"])
 def payment_create():
-    import time
-    data   = request.get_json(silent=True) or {}
-    email  = (data.get("email") or "").strip().lower()
-    days   = int(data.get("days", 30))
+    import time, re
+    data       = request.get_json(silent=True) or {}
+    email      = (data.get("email") or "").strip().lower()
+    days       = int(data.get("days", 30))
+    machine_id = (data.get("machine_id") or "").strip().upper()
 
     if not email or "@" not in email:
         return jsonify({"error": "Email không hợp lệ"}), 400
     if days not in (30, 90, 365):
         return jsonify({"error": "Gói không hợp lệ"}), 400
+    if not machine_id:
+        return jsonify({"error": "Vui lòng nhập Machine ID"}), 400
+    if not re.fullmatch(r"[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}", machine_id):
+        return jsonify({"error": "Machine ID không đúng định dạng (XXXX-XXXX-XXXX-XXXX)"}), 400
 
     amount_map = {30: PRICE_30D, 90: PRICE_90D, 365: PRICE_365D}
     amount     = amount_map[days]
@@ -667,11 +710,12 @@ def payment_create():
 
     with get_db() as conn:
         conn.execute(
-            "INSERT INTO orders (order_code, email, days, amount, status, created_at) "
-            "VALUES (?,?,?,?,?,?)",
-            (str(order_code), email, days, amount, "pending",
+            "INSERT INTO orders (order_code, email, machine_id, days, amount, status, created_at) "
+            "VALUES (?,?,?,?,?,?,?)",
+            (str(order_code), email, machine_id, days, amount, "pending",
              datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
         )
+        log.info("Tạo order %s — %s — machine=%s — %dd", order_code, email, machine_id, days)
 
     payload = {
         "orderCode":   order_code,
@@ -688,8 +732,8 @@ def payment_create():
             "https://api-merchant.payos.vn/v2/payment-requests",
             json=payload,
             headers={
-                "x-client-id": PAYOS_CLIENT_ID,
-                "x-api-key":   PAYOS_API_KEY,
+                "x-client-id":  PAYOS_CLIENT_ID,
+                "x-api-key":    PAYOS_API_KEY,
                 "Content-Type": "application/json",
             },
             timeout=15,
@@ -742,6 +786,16 @@ def payment_webhook():
             "UPDATE orders SET status='paid', paid_at=?, key_sent=? WHERE order_code=?",
             (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), key, order_code),
         )
+
+    # Nếu có machine_id từ lúc đặt hàng → gán ngay vào license (khóa cứng)
+    machine_id = order["machine_id"] if order["machine_id"] else None
+    if machine_id:
+        with get_db() as conn:
+            conn.execute(
+                "UPDATE licenses SET machine_id=?, activated_at=? WHERE key=?",
+                (machine_id, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), key),
+            )
+        log.info("Gán machine_id '%s' cho key '%s' (pre-locked)", machine_id, key)
 
     _send_key_email(order["email"], key, order["days"])
     return jsonify({"ok": True})
@@ -1170,7 +1224,6 @@ SHOP_HTML = """
   <div class="footer-copy">© 2026 Auto CapCut Video Sync</div>
   <div class="footer-links">
     <a href="{{ support_url }}" target="_blank">Hỗ trợ</a>
-    <a href="/admin">Admin</a>
   </div>
 </footer>
 
@@ -1178,13 +1231,24 @@ SHOP_HTML = """
 <div class="modal-overlay" id="modal">
   <div class="modal">
     <div class="modal-title" id="modal-title">MUA LICENSE</div>
-    <div class="modal-sub" id="modal-sub">Nhập email để nhận key kích hoạt</div>
+    <div class="modal-sub" id="modal-sub">Nhập thông tin để nhận key kích hoạt</div>
+
     <label>Email nhận key</label>
     <input type="email" id="modal-email" placeholder="example@gmail.com">
+
+    <label>Machine ID <span style="color:var(--gold)">*</span></label>
+    <input type="text" id="modal-machine"
+           placeholder="Mở phần mềm → Tab Kích hoạt → Copy Machine ID"
+           style="font-family:Consolas,monospace;font-size:13px;letter-spacing:1px;">
+
     <div class="modal-note">
-      🔐 Key sẽ được gửi tự động đến email này sau khi thanh toán thành công.
-      Thời hạn tính từ ngày thanh toán.
+      🔐 <b>Machine ID là gì?</b><br>
+      Mở phần mềm <b>Auto CapCut Video Sync</b>, vào màn hình kích hoạt,
+      copy dãy ký tự <b>Machine ID</b> rồi dán vào đây.<br><br>
+      ⚠️ Key sẽ bị <b>khóa cứng với máy này</b> — không dùng được trên máy khác.
+      Key gửi về email sau khi thanh toán thành công.
     </div>
+
     <button class="btn-pay" id="btn-pay" onclick="submitPayment()">
       💳 Thanh toán ngay
     </button>
@@ -1199,11 +1263,12 @@ let _days = 30, _amount = 99000;
 function openModal(days, amount) {
   _days = days; _amount = amount;
   const labels = {30:'30 ngày — 99.000₫', 90:'90 ngày — 249.000₫', 365:'365 ngày — 799.000₫'};
-  document.getElementById('modal-title').textContent = 'MUA ' + days + ' NGÀY';
-  document.getElementById('modal-sub').textContent   = labels[days];
-  document.getElementById('modal-msg').textContent   = '';
-  document.getElementById('modal-msg').className     = '';
-  document.getElementById('modal-email').value       = '';
+  document.getElementById('modal-title').textContent  = 'MUA ' + days + ' NGÀY';
+  document.getElementById('modal-sub').textContent    = labels[days];
+  document.getElementById('modal-msg').textContent    = '';
+  document.getElementById('modal-msg').className      = '';
+  document.getElementById('modal-email').value        = '';
+  document.getElementById('modal-machine').value      = '';
   document.getElementById('modal').classList.add('show');
 }
 
@@ -1211,31 +1276,49 @@ function closeModal() {
   document.getElementById('modal').classList.remove('show');
 }
 
+// Validate định dạng Machine ID: XXXX-XXXX-XXXX-XXXX
+function isValidMachineId(v) {
+  return /^[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(v.trim().toUpperCase());
+}
+
 async function submitPayment() {
-  const email = document.getElementById('modal-email').value.trim();
-  const msg   = document.getElementById('modal-msg');
-  const btn   = document.getElementById('btn-pay');
-  if (!email || !email.includes('@')) {
-    msg.className = 'err'; msg.textContent = 'Vui lòng nhập email hợp lệ.'; return;
-  }
-  btn.textContent = 'Đang xử lý...'; btn.disabled = true;
+  const email     = document.getElementById('modal-email').value.trim();
+  const machineId = document.getElementById('modal-machine').value.trim().toUpperCase();
+  const msg       = document.getElementById('modal-msg');
+  const btn       = document.getElementById('btn-pay');
+
   msg.className = ''; msg.textContent = '';
+
+  if (!email || !email.includes('@')) {
+    msg.className = 'err'; msg.textContent = '❌ Vui lòng nhập email hợp lệ.'; return;
+  }
+  if (!machineId) {
+    msg.className = 'err';
+    msg.textContent = '❌ Vui lòng nhập Machine ID (mở phần mềm để lấy).'; return;
+  }
+  if (!isValidMachineId(machineId)) {
+    msg.className = 'err';
+    msg.textContent = '❌ Machine ID không đúng định dạng (VD: A1B2-C3D4-E5F6-G7H8).'; return;
+  }
+
+  btn.textContent = 'Đang xử lý...'; btn.disabled = true;
+
   try {
     const res  = await fetch('/payment/create', {
       method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ email, days: _days })
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ email, days: _days, machine_id: machineId })
     });
     const data = await res.json();
     if (data.checkout_url) {
       window.location.href = data.checkout_url;
     } else {
       msg.className = 'err';
-      msg.textContent = 'Lỗi: ' + (data.error || 'Không tạo được link thanh toán');
+      msg.textContent = '❌ Lỗi: ' + (data.error || 'Không tạo được link thanh toán');
       btn.textContent = '💳 Thanh toán ngay'; btn.disabled = false;
     }
   } catch(e) {
-    msg.className = 'err'; msg.textContent = 'Lỗi kết nối: ' + e;
+    msg.className = 'err'; msg.textContent = '❌ Lỗi kết nối: ' + e;
     btn.textContent = '💳 Thanh toán ngay'; btn.disabled = false;
   }
 }
