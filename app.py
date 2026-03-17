@@ -13,7 +13,7 @@ from email.mime.text import MIMEText
 from functools import wraps
 from pathlib import Path
 
-from flask import Flask, request, jsonify, session, redirect
+from flask import Flask, request, jsonify, abort, render_template_string, session, redirect, url_for
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "change_me_in_production")
@@ -39,7 +39,7 @@ PRICE_365D = 799_000
 
 PRODUCT_NAME = "Auto CapCut Video Sync"
 SUPPORT_URL  = "https://t.me/vankhaidev"   # ← thay link hỗ trợ của bạn
-SHOP_URL     = "https://autocapcut-production.up.railway.app"     # ← thay link shop của bạn
+SHOP_URL     = "https://your-shop.com"     # ← thay link shop của bạn
 
 
 # ── Database ──────────────────────────────────────────────────────────────────
@@ -53,17 +53,17 @@ def init_db():
     with get_db() as conn:
         conn.executescript("""
         CREATE TABLE IF NOT EXISTS licenses (
-            id           INTEGER PRIMARY KEY AUTOINCREMENT,
-            key          TEXT    UNIQUE NOT NULL,
-            email        TEXT    NOT NULL,
-            machine_id   TEXT    DEFAULT NULL,
-            days         INTEGER NOT NULL DEFAULT 30,
-            created_at   TEXT    NOT NULL,
-            activated_at TEXT    DEFAULT NULL,
-            expire_date  TEXT    NOT NULL,
-            active       INTEGER NOT NULL DEFAULT 1,
-            order_id     TEXT    DEFAULT NULL,
-            notes        TEXT    DEFAULT ''
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            key         TEXT    UNIQUE NOT NULL,
+            email       TEXT    NOT NULL,
+            machine_id  TEXT    DEFAULT NULL,
+            days        INTEGER NOT NULL DEFAULT 30,
+            created_at  TEXT    NOT NULL,
+            activated_at TEXT   DEFAULT NULL,
+            expire_date TEXT    NOT NULL,
+            active      INTEGER NOT NULL DEFAULT 1,
+            order_id    TEXT    DEFAULT NULL,
+            notes       TEXT    DEFAULT ''
         );
         CREATE TABLE IF NOT EXISTS orders (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -80,9 +80,7 @@ def init_db():
     log.info("Database khởi tạo xong: %s", DB_PATH)
 
 
-# ✅ FIX CHÍNH: Gọi init_db() ở module level
-# → gunicorn không chạy __main__ nên trước đây database không được tạo,
-#   dẫn đến lỗi "no such table" mỗi khi admin thao tác.
+# ── FIX: Gọi init_db() khi module load (gunicorn không chạy __main__)
 init_db()
 
 
@@ -90,8 +88,8 @@ init_db()
 def _gen_key() -> str:
     chars = string.ascii_uppercase + string.digits
     while True:
-        raw = "".join(random.choices(chars, k=16))
-        key = f"{raw[0:4]}-{raw[4:8]}-{raw[8:12]}-{raw[12:16]}"
+        raw   = "".join(random.choices(chars, k=16))
+        key   = f"{raw[0:4]}-{raw[4:8]}-{raw[8:12]}-{raw[12:16]}"
         with get_db() as conn:
             row = conn.execute("SELECT id FROM licenses WHERE key=?", (key,)).fetchone()
         if not row:
@@ -101,6 +99,7 @@ def _gen_key() -> str:
 def _create_license(email: str, days: int, order_id: str = None, notes: str = "") -> str:
     key         = _gen_key()
     now         = datetime.now()
+    # Thời hạn tính từ lúc kích hoạt, không phải lúc tạo key
     expire_date = (now + timedelta(days=days)).strftime("%Y-%m-%d")
     with get_db() as conn:
         conn.execute(
@@ -116,7 +115,7 @@ def _create_license(email: str, days: int, order_id: str = None, notes: str = ""
 def _send_key_email(to_email: str, key: str, days: int) -> bool:
     """Gửi key qua Gmail SMTP."""
     if not GMAIL_USER or not GMAIL_PASS:
-        log.warning("Chưa cấu hình Gmail (GMAIL_USER / GMAIL_APP_PASS) — bỏ qua gửi email.")
+        log.warning("Chưa cấu hình Gmail — bỏ qua gửi email.")
         return False
 
     subject = f"🎬 License Key {PRODUCT_NAME} của bạn"
@@ -130,8 +129,7 @@ def _send_key_email(to_email: str, key: str, days: int) -> bool:
             <p style="color:#1C1E21;font-size:15px;">Xin chào,</p>
             <p style="color:#606770;">Đây là License Key của bạn:</p>
 
-            <div style="background:#F0F2F5;border:2px dashed #007BFF;border-radius:4px;
-                        padding:20px;text-align:center;margin:20px 0;">
+            <div style="background:#F0F2F5;border:2px dashed #007BFF;border-radius:4px;padding:20px;text-align:center;margin:20px 0;">
                 <span style="font-family:Consolas,monospace;font-size:26px;font-weight:bold;
                              color:#007BFF;letter-spacing:4px;">{key}</span>
                 <p style="color:#606770;font-size:13px;margin:8px 0 0;">
@@ -149,7 +147,7 @@ def _send_key_email(to_email: str, key: str, days: int) -> bool:
 
             <div style="background:#FFF3CD;border-left:4px solid #FFC107;padding:12px 16px;margin:20px 0;">
                 <b>⚠️ Lưu ý quan trọng:</b><br>
-                Key này chỉ dùng được cho <b>1 máy tính</b>.
+                Key này chỉ dùng được cho <b>1 máy tính</b>. 
                 Sau khi kích hoạt trên máy này, key sẽ bị khóa với máy đó.<br>
                 Nếu cần chuyển sang máy khác, vui lòng liên hệ hỗ trợ.
             </div>
@@ -204,11 +202,13 @@ def api_activate():
         if not row["active"]:
             return jsonify({"status": "invalid"})
 
+        # Kiểm tra hết hạn
         expire_dt = datetime.strptime(row["expire_date"], "%Y-%m-%d")
         days_left = (expire_dt - datetime.now()).days
         if days_left < 0:
             return jsonify({"status": "expired", "expire": row["expire_date"]})
 
+        # Gắn machine_id (lần đầu kích hoạt)
         if row["machine_id"] is None:
             conn.execute(
                 "UPDATE licenses SET machine_id=?, activated_at=? WHERE key=?",
@@ -257,6 +257,7 @@ def api_check():
 
 def _payos_checksum(data: dict) -> str:
     """Tính checksum PayOS theo tài liệu chính thức."""
+    # Sort by key, nối thành chuỗi key=value&key=value
     sorted_str = "&".join(f"{k}={v}" for k, v in sorted(data.items()))
     return hmac.new(
         PAYOS_CHECKSUM.encode("utf-8"),
@@ -283,33 +284,32 @@ def payment_create():
     if days not in (30, 90, 365):
         return jsonify({"error": "Gói không hợp lệ"}), 400
 
-    if not PAYOS_CLIENT_ID or not PAYOS_API_KEY or not PAYOS_CHECKSUM:
-        return jsonify({"error": "PayOS chưa được cấu hình trên server"}), 500
-
     amount_map = {30: PRICE_30D, 90: PRICE_90D, 365: PRICE_365D}
     amount     = amount_map[days]
-    order_code = int(time.time() * 1000) % 9_999_999
+    order_code = int(time.time() * 1000) % 9_999_999  # PayOS yêu cầu số nguyên
 
+    # Lưu order vào DB
     with get_db() as conn:
         conn.execute(
-            "INSERT INTO orders (order_code, email, days, amount, status, created_at) "
-            "VALUES (?,?,?,?,?,?)",
+            "INSERT INTO orders (order_code, email, days, amount, status, created_at) VALUES (?,?,?,?,?,?)",
             (str(order_code), email, days, amount, "pending",
              datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
         )
 
+    # Gọi PayOS API
     payload = {
-        "orderCode":   order_code,
-        "amount":      amount,
-        "description": f"Key {days}d",
-        "buyerEmail":  email,
-        "returnUrl":   f"{request.host_url}payment/success",
-        "cancelUrl":   f"{request.host_url}payment/cancel",
+        "orderCode":     order_code,
+        "amount":        amount,
+        "description":   f"Key {days}d",   # tối đa 25 ký tự
+        "buyerEmail":    email,
+        "returnUrl":     f"{request.host_url}payment/success",
+        "cancelUrl":     f"{request.host_url}payment/cancel",
     }
-    payload["signature"] = _payos_checksum(payload)
+    checksum          = _payos_checksum(payload)
+    payload["signature"] = checksum
 
     try:
-        resp   = req_lib.post(
+        resp = req_lib.post(
             "https://api-merchant.payos.vn/v2/payment-requests",
             json=payload,
             headers={
@@ -324,20 +324,22 @@ def payment_create():
         return jsonify({"error": str(e)}), 500
 
     if result.get("code") == "00":
-        return jsonify({
-            "checkout_url": result["data"]["checkoutUrl"],
-            "order_code":   order_code,
-        })
+        link = result["data"]["checkoutUrl"]
+        return jsonify({"checkout_url": link, "order_code": order_code})
 
     return jsonify({"error": result.get("desc", "PayOS error")}), 400
 
 
 @app.route("/payment/webhook", methods=["POST"])
 def payment_webhook():
-    """PayOS gọi vào đây sau khi thanh toán thành công."""
+    """
+    PayOS gọi vào đây sau khi thanh toán thành công.
+    Tự động tạo key + gửi email cho khách.
+    """
     data = request.get_json(silent=True) or {}
     log.info("PayOS webhook: %s", json.dumps(data, ensure_ascii=False))
 
+    # Xác minh checksum
     received_sig = data.get("signature", "")
     check_data   = {k: v for k, v in data.items() if k != "signature"}
     expected_sig = _payos_checksum(check_data)
@@ -346,7 +348,9 @@ def payment_webhook():
         return jsonify({"error": "invalid signature"}), 400
 
     order_code = str(data.get("orderCode", ""))
-    if data.get("status") != "PAID":
+    status_pay = data.get("status", "")
+
+    if status_pay != "PAID":
         return jsonify({"ok": True})
 
     with get_db() as conn:
@@ -359,20 +363,25 @@ def payment_webhook():
             return jsonify({"ok": True})
 
         if order["status"] == "paid":
-            return jsonify({"ok": True})
+            return jsonify({"ok": True})   # đã xử lý rồi
 
+        # Tạo key
         key = _create_license(
             email=order["email"],
             days=order["days"],
             order_id=order_code,
             notes=f"PayOS order {order_code}",
         )
+
+        # Cập nhật order
         conn.execute(
             "UPDATE orders SET status='paid', paid_at=?, key_sent=? WHERE order_code=?",
             (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), key, order_code),
         )
 
+    # Gửi email
     _send_key_email(order["email"], key, order["days"])
+
     return jsonify({"ok": True})
 
 
@@ -389,7 +398,7 @@ def payment_success():
         <h1 style="color:#28A745;">✅ Thanh toán thành công!</h1>
         <p>Key License đã được gửi đến email <b>{order['email']}</b></p>
         <p style="color:#606770;">Vui lòng kiểm tra hộp thư (kể cả thư mục Spam)</p>
-        <a href="{SUPPORT_URL}" style="color:#007BFF;">Liên hệ hỗ trợ nếu chưa nhận được</a>
+        <a href="{SUPPORT_URL}" style="color:#007BFF;">Liên hệ hỗ trợ</a>
         </body></html>
         """
     return """
@@ -411,7 +420,7 @@ def payment_cancel():
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-#  TRANG BÁN HÀNG
+#  TRANG BÁN HÀNG (đơn giản)
 # ═════════════════════════════════════════════════════════════════════════════
 
 SHOP_HTML = """
@@ -420,135 +429,699 @@ SHOP_HTML = """
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Mua License — Auto CapCut Video Sync</title>
+<title>Auto CapCut Video Sync — Tự động hoá quy trình edit video</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Plus+Jakarta+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
-  * { box-sizing:border-box; margin:0; padding:0; }
-  body { font-family:'Segoe UI',Arial,sans-serif; background:#F0F2F5; color:#1C1E21; }
-  .hero { background:#007BFF; color:white; padding:60px 20px; text-align:center; }
-  .hero h1 { font-size:32px; margin-bottom:12px; }
-  .hero p  { font-size:16px; opacity:.85; }
-  .plans { display:flex; gap:24px; justify-content:center; flex-wrap:wrap;
-           padding:48px 20px; max-width:900px; margin:0 auto; }
-  .plan  { background:white; border:1px solid #CCD0D5; border-radius:4px;
-           padding:32px 24px; width:240px; text-align:center; }
-  .plan.popular { border:2px solid #007BFF; position:relative; }
-  .plan.popular::before { content:"Phổ biến nhất"; background:#007BFF; color:white;
-     font-size:12px; font-weight:bold; padding:4px 12px;
-     position:absolute; top:-14px; left:50%; transform:translateX(-50%); }
-  .plan h2 { font-size:18px; margin-bottom:8px; }
-  .plan .price { font-size:32px; font-weight:bold; color:#007BFF; margin:12px 0; }
-  .plan .price span { font-size:14px; color:#606770; }
-  .plan ul { list-style:none; text-align:left; margin:16px 0; color:#606770;
-             font-size:14px; line-height:2; }
-  .plan ul li::before { content:"✓  "; color:#28A745; }
-  .plan button { background:#007BFF; color:white; border:none; padding:12px 24px;
-    font-size:15px; font-weight:bold; cursor:pointer; width:100%; margin-top:12px; }
-  .plan button:hover { background:#0056B3; }
-  .form-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.5);
-                  z-index:100; align-items:center; justify-content:center; }
-  .form-overlay.show { display:flex; }
-  .form-box { background:white; padding:32px; width:380px; border-radius:4px; }
-  .form-box h3 { margin-bottom:16px; }
-  .form-box input { width:100%; padding:10px; border:1px solid #CCD0D5;
-                    font-size:14px; margin-bottom:12px; }
-  .form-box button { width:100%; background:#007BFF; color:white; border:none;
-                     padding:12px; font-size:15px; font-weight:bold; cursor:pointer; }
-  .form-box .cancel { background:#E4E6EB; color:#1C1E21; margin-top:8px; }
-  #msg { margin-top:12px; text-align:center; font-weight:bold; }
+:root {
+  --bg:        #080810;
+  --surface:   #10101C;
+  --card:      #16162A;
+  --border:    rgba(255,255,255,0.07);
+  --gold:      #F5A623;
+  --gold-dim:  rgba(245,166,35,0.15);
+  --text:      #EDEAF4;
+  --muted:     #7A7898;
+  --red:       #FF4757;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{
+  font-family:'Plus Jakarta Sans',sans-serif;
+  background:var(--bg);
+  color:var(--text);
+  line-height:1.6;
+  overflow-x:hidden;
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar{width:6px}
+::-webkit-scrollbar-track{background:var(--bg)}
+::-webkit-scrollbar-thumb{background:#2A2A44;border-radius:3px}
+
+/* ── NAV ── */
+nav{
+  position:fixed;top:0;left:0;right:0;z-index:100;
+  display:flex;align-items:center;justify-content:space-between;
+  padding:18px 5%;
+  background:rgba(8,8,16,0.85);
+  backdrop-filter:blur(12px);
+  border-bottom:1px solid var(--border);
+}
+.logo{
+  font-family:'Bebas Neue',sans-serif;
+  font-size:22px;letter-spacing:2px;
+  color:var(--text);
+  display:flex;align-items:center;gap:10px;
+}
+.logo-badge{
+  background:var(--gold);
+  color:#080810;
+  font-family:'Plus Jakarta Sans',sans-serif;
+  font-size:10px;font-weight:600;
+  padding:2px 8px;border-radius:3px;
+  letter-spacing:1px;
+}
+.nav-link{
+  color:var(--muted);font-size:14px;text-decoration:none;
+  transition:color .2s;
+}
+.nav-link:hover{color:var(--text)}
+.nav-right{display:flex;align-items:center;gap:20px}
+
+/* ── HERO ── */
+.hero{
+  min-height:100vh;
+  display:flex;flex-direction:column;
+  align-items:center;justify-content:center;
+  text-align:center;
+  padding:120px 20px 80px;
+  position:relative;
+  overflow:hidden;
+}
+.hero-glow{
+  position:absolute;
+  width:600px;height:600px;
+  background:radial-gradient(circle, rgba(245,166,35,0.08) 0%, transparent 70%);
+  top:50%;left:50%;transform:translate(-50%,-60%);
+  pointer-events:none;
+}
+.hero-glow2{
+  position:absolute;
+  width:400px;height:400px;
+  background:radial-gradient(circle, rgba(100,80,255,0.06) 0%, transparent 70%);
+  bottom:10%;right:5%;
+  pointer-events:none;
+}
+.hero-tag{
+  display:inline-flex;align-items:center;gap:8px;
+  border:1px solid rgba(245,166,35,0.3);
+  background:rgba(245,166,35,0.07);
+  padding:6px 16px;border-radius:100px;
+  font-size:13px;color:var(--gold);
+  margin-bottom:28px;
+  animation:fadeUp .8s ease both;
+}
+.hero-tag-dot{
+  width:6px;height:6px;border-radius:50%;
+  background:var(--gold);
+  animation:pulse 2s ease infinite;
+}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(.8)}}
+h1{
+  font-family:'Bebas Neue',sans-serif;
+  font-size:clamp(56px,9vw,110px);
+  line-height:1;letter-spacing:2px;
+  animation:fadeUp .8s .1s ease both;
+}
+h1 em{
+  font-style:normal;
+  color:var(--gold);
+  position:relative;
+}
+.hero-sub{
+  max-width:540px;
+  font-size:17px;color:var(--muted);
+  margin:24px auto 40px;
+  animation:fadeUp .8s .2s ease both;
+}
+.hero-cta{
+  display:inline-flex;align-items:center;gap:10px;
+  background:var(--gold);
+  color:#080810;
+  font-weight:600;font-size:16px;
+  padding:16px 40px;border-radius:6px;
+  border:none;cursor:pointer;
+  text-decoration:none;
+  transition:transform .2s,box-shadow .2s;
+  animation:fadeUp .8s .3s ease both;
+}
+.hero-cta:hover{transform:translateY(-2px);box-shadow:0 12px 40px rgba(245,166,35,0.35)}
+.hero-stats{
+  display:flex;gap:48px;margin-top:64px;
+  animation:fadeUp .8s .4s ease both;
+}
+.hero-stat-num{
+  font-family:'Bebas Neue',sans-serif;
+  font-size:38px;color:var(--text);
+  letter-spacing:1px;
+}
+.hero-stat-label{font-size:13px;color:var(--muted)}
+
+/* ── FEATURES ── */
+.section{padding:80px 5%}
+.section-label{
+  font-size:12px;font-weight:600;letter-spacing:3px;
+  color:var(--gold);text-transform:uppercase;
+  margin-bottom:12px;
+}
+.section-title{
+  font-family:'Bebas Neue',sans-serif;
+  font-size:clamp(36px,5vw,56px);
+  letter-spacing:1px;line-height:1.1;
+  margin-bottom:16px;
+}
+.section-sub{font-size:16px;color:var(--muted);max-width:500px;line-height:1.7}
+.features-grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(260px,1fr));
+  gap:16px;margin-top:48px;
+}
+.feature-card{
+  background:var(--card);
+  border:1px solid var(--border);
+  border-radius:12px;
+  padding:28px;
+  transition:border-color .2s,transform .2s;
+  animation:fadeUp .6s ease both;
+}
+.feature-card:hover{
+  border-color:rgba(245,166,35,0.25);
+  transform:translateY(-3px);
+}
+.feature-icon{
+  width:44px;height:44px;border-radius:10px;
+  background:var(--gold-dim);
+  display:flex;align-items:center;justify-content:center;
+  font-size:22px;margin-bottom:18px;
+}
+.feature-title{font-size:16px;font-weight:600;margin-bottom:8px}
+.feature-desc{font-size:14px;color:var(--muted);line-height:1.7}
+
+/* ── PRICING ── */
+.pricing-wrap{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(280px,1fr));
+  gap:16px;margin-top:48px;max-width:960px;margin-left:auto;margin-right:auto;
+}
+.plan-card{
+  background:var(--card);
+  border:1px solid var(--border);
+  border-radius:16px;
+  padding:32px;
+  position:relative;
+  transition:transform .2s,border-color .2s;
+}
+.plan-card:hover{transform:translateY(-4px)}
+.plan-card.popular{
+  border-color:var(--gold);
+  background:linear-gradient(160deg, #1C1A2E 0%, #16162A 60%);
+}
+.popular-badge{
+  position:absolute;top:-13px;left:50%;transform:translateX(-50%);
+  background:var(--gold);
+  color:#080810;
+  font-size:11px;font-weight:700;letter-spacing:2px;
+  padding:4px 20px;border-radius:100px;
+  white-space:nowrap;
+  text-transform:uppercase;
+}
+.plan-name{font-size:14px;font-weight:600;color:var(--muted);letter-spacing:1px;text-transform:uppercase;margin-bottom:12px}
+.plan-price{
+  font-family:'Bebas Neue',sans-serif;
+  font-size:60px;letter-spacing:1px;color:var(--text);
+  line-height:1;
+}
+.plan-price span{font-family:'Plus Jakarta Sans',sans-serif;font-size:18px;color:var(--muted);vertical-align:middle;margin-left:4px}
+.plan-period{font-size:13px;color:var(--muted);margin-top:4px;margin-bottom:24px}
+.plan-divider{height:1px;background:var(--border);margin:24px 0}
+.plan-features{list-style:none;margin-bottom:32px}
+.plan-features li{
+  font-size:14px;color:var(--muted);
+  padding:7px 0;
+  display:flex;align-items:center;gap:10px;
+}
+.plan-features li::before{
+  content:"";
+  width:16px;height:16px;border-radius:50%;flex-shrink:0;
+  background:var(--gold-dim);
+  border:1px solid rgba(245,166,35,.4);
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M2 5l2 2 4-4' stroke='%23F5A623' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-size:10px;background-position:center;background-repeat:no-repeat;
+}
+.plan-btn{
+  width:100%;padding:14px;
+  border-radius:8px;
+  font-family:'Plus Jakarta Sans',sans-serif;
+  font-size:15px;font-weight:600;
+  cursor:pointer;border:none;
+  transition:transform .15s,box-shadow .15s;
+}
+.plan-btn:hover{transform:translateY(-2px)}
+.plan-btn.default{
+  background:rgba(255,255,255,0.06);
+  color:var(--text);border:1px solid var(--border);
+}
+.plan-btn.default:hover{background:rgba(255,255,255,0.1)}
+.plan-btn.primary{
+  background:var(--gold);color:#080810;
+  box-shadow:0 8px 24px rgba(245,166,35,0.25);
+}
+.plan-btn.primary:hover{box-shadow:0 12px 32px rgba(245,166,35,0.4)}
+.save-tag{
+  display:inline-block;
+  background:rgba(245,166,35,0.12);
+  color:var(--gold);
+  font-size:12px;font-weight:600;
+  padding:3px 10px;border-radius:100px;
+  margin-left:8px;
+}
+
+/* ── HOW IT WORKS ── */
+.steps{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(200px,1fr));
+  gap:0;margin-top:48px;
+  position:relative;
+}
+.steps::before{
+  content:"";
+  position:absolute;top:28px;left:10%;right:10%;height:1px;
+  background:linear-gradient(90deg, transparent, var(--border) 20%, var(--border) 80%, transparent);
+}
+.step{text-align:center;padding:0 20px;position:relative}
+.step-num{
+  width:56px;height:56px;border-radius:50%;
+  background:var(--card);border:1px solid var(--border);
+  display:flex;align-items:center;justify-content:center;
+  font-family:'Bebas Neue',sans-serif;font-size:22px;color:var(--gold);
+  margin:0 auto 20px;position:relative;z-index:1;
+}
+.step-title{font-size:15px;font-weight:600;margin-bottom:8px}
+.step-desc{font-size:13px;color:var(--muted);line-height:1.6}
+
+/* ── FAQ ── */
+.faq-list{margin-top:40px;max-width:700px}
+.faq-item{
+  border-bottom:1px solid var(--border);
+  overflow:hidden;
+}
+.faq-q{
+  width:100%;background:none;border:none;
+  color:var(--text);font-family:'Plus Jakarta Sans',sans-serif;
+  font-size:15px;font-weight:500;
+  padding:20px 0;text-align:left;cursor:pointer;
+  display:flex;justify-content:space-between;align-items:center;
+  gap:12px;
+}
+.faq-icon{
+  width:20px;height:20px;border-radius:50%;
+  border:1px solid var(--border);flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;
+  font-size:14px;color:var(--muted);
+  transition:transform .2s;
+}
+.faq-item.open .faq-icon{transform:rotate(45deg);border-color:var(--gold);color:var(--gold)}
+.faq-a{
+  font-size:14px;color:var(--muted);line-height:1.7;
+  max-height:0;overflow:hidden;transition:max-height .3s ease, padding .3s;
+  padding-bottom:0;
+}
+.faq-item.open .faq-a{max-height:200px;padding-bottom:20px}
+
+/* ── FOOTER ── */
+footer{
+  border-top:1px solid var(--border);
+  padding:40px 5%;
+  display:flex;align-items:center;justify-content:space-between;
+  flex-wrap:wrap;gap:16px;
+}
+.footer-copy{font-size:13px;color:var(--muted)}
+.footer-links{display:flex;gap:20px}
+.footer-links a{font-size:13px;color:var(--muted);text-decoration:none;transition:color .2s}
+.footer-links a:hover{color:var(--text)}
+
+/* ── MODAL ── */
+.modal-overlay{
+  display:none;position:fixed;inset:0;z-index:200;
+  background:rgba(0,0,0,0.75);backdrop-filter:blur(4px);
+  align-items:center;justify-content:center;padding:20px;
+}
+.modal-overlay.show{display:flex}
+.modal{
+  background:var(--card);
+  border:1px solid rgba(255,255,255,0.1);
+  border-radius:20px;
+  padding:40px;width:100%;max-width:440px;
+  animation:modalIn .25s ease;
+}
+@keyframes modalIn{from{transform:scale(.95) translateY(10px);opacity:0}to{transform:none;opacity:1}}
+.modal-title{font-family:'Bebas Neue',sans-serif;font-size:30px;letter-spacing:1px;margin-bottom:4px}
+.modal-sub{font-size:14px;color:var(--muted);margin-bottom:28px}
+.modal label{display:block;font-size:12px;font-weight:600;color:var(--muted);letter-spacing:1px;text-transform:uppercase;margin-bottom:6px}
+.modal input{
+  width:100%;padding:13px 16px;
+  background:rgba(255,255,255,0.04);
+  border:1px solid var(--border);border-radius:8px;
+  color:var(--text);font-family:'Plus Jakarta Sans',sans-serif;font-size:15px;
+  margin-bottom:16px;outline:none;
+  transition:border-color .2s;
+}
+.modal input:focus{border-color:rgba(245,166,35,0.5)}
+.modal input::placeholder{color:var(--muted)}
+.modal-note{font-size:12px;color:var(--muted);line-height:1.6;margin-bottom:24px;padding:12px 14px;background:rgba(255,255,255,0.03);border-radius:8px;border-left:2px solid var(--gold)}
+.btn-pay{
+  width:100%;padding:16px;
+  background:var(--gold);color:#080810;
+  border:none;border-radius:8px;
+  font-family:'Plus Jakarta Sans',sans-serif;font-size:16px;font-weight:700;
+  cursor:pointer;transition:transform .15s,box-shadow .15s;
+  display:flex;align-items:center;justify-content:center;gap:8px;
+}
+.btn-pay:hover{transform:translateY(-1px);box-shadow:0 8px 24px rgba(245,166,35,0.35)}
+.btn-pay:active{transform:scale(.98)}
+.btn-cancel{
+  width:100%;padding:12px;margin-top:10px;
+  background:none;border:none;color:var(--muted);
+  font-family:'Plus Jakarta Sans',sans-serif;font-size:14px;
+  cursor:pointer;transition:color .2s;
+}
+.btn-cancel:hover{color:var(--text)}
+#modal-msg{
+  margin-top:12px;text-align:center;font-size:14px;font-weight:600;min-height:20px;
+}
+#modal-msg.err{color:var(--red)}
+#modal-msg.ok{color:#4ade80}
+
+/* ── ANIMATIONS ── */
+@keyframes fadeUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:none}}
+
+/* ── RESPONSIVE ── */
+@media(max-width:600px){
+  .hero-stats{gap:28px}
+  .steps::before{display:none}
+  footer{flex-direction:column;text-align:center}
+  .modal{padding:28px 20px}
+}
 </style>
 </head>
 <body>
-<div class="hero">
-  <h1>🎬 Auto CapCut Video Sync</h1>
-  <p>Tự động tạo draft CapCut từ video + audio + SRT — tiết kiệm hàng giờ edit</p>
-</div>
 
-<div class="plans">
-  <div class="plan">
-    <h2>30 Ngày</h2>
-    <div class="price">99K <span>VND</span></div>
-    <ul>
-      <li>Dùng trên 1 máy</li>
-      <li>Cập nhật miễn phí</li>
-      <li>Hỗ trợ Telegram</li>
-    </ul>
-    <button onclick="openForm(30, 99000)">Mua ngay</button>
+<!-- NAV -->
+<nav>
+  <div class="logo">
+    🎬 AutoCapCut
+    <span class="logo-badge">v2.1</span>
   </div>
-
-  <div class="plan popular">
-    <h2>90 Ngày</h2>
-    <div class="price">249K <span>VND</span></div>
-    <ul>
-      <li>Dùng trên 1 máy</li>
-      <li>Cập nhật miễn phí</li>
-      <li>Hỗ trợ Telegram</li>
-      <li>Tiết kiệm 48K</li>
-    </ul>
-    <button onclick="openForm(90, 249000)">Mua ngay</button>
+  <div class="nav-right">
+    <a href="#pricing" class="nav-link">Bảng giá</a>
+    <a href="https://t.me/vankhaidev" target="_blank" class="nav-link">Hỗ trợ</a>
   </div>
+</nav>
 
-  <div class="plan">
-    <h2>365 Ngày</h2>
-    <div class="price">799K <span>VND</span></div>
-    <ul>
-      <li>Dùng trên 1 máy</li>
-      <li>Cập nhật miễn phí</li>
-      <li>Hỗ trợ Telegram</li>
-      <li>Tiết kiệm 389K</li>
-    </ul>
-    <button onclick="openForm(365, 799000)">Mua ngay</button>
+<!-- HERO -->
+<section class="hero">
+  <div class="hero-glow"></div>
+  <div class="hero-glow2"></div>
+  <div class="hero-tag">
+    <span class="hero-tag-dot"></span>
+    Phiên bản 2.1 — Hỗ trợ Compound Clip
   </div>
-</div>
+  <h1>EDIT VIDEO<br><em>TỰ ĐỘNG HÓA</em></h1>
+  <p class="hero-sub">
+    Tự động ghép video, audio và subtitle vào CapCut Draft chỉ trong vài phút.
+    Không cần server, không cần code.
+  </p>
+  <a href="#pricing" class="hero-cta">
+    Mua License ngay
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 8h10M9 4l4 4-4 4" stroke="#080810" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </a>
+  <div class="hero-stats">
+    <div>
+      <div class="hero-stat-num">5X</div>
+      <div class="hero-stat-label">Nhanh hơn edit tay</div>
+    </div>
+    <div>
+      <div class="hero-stat-num">1080P</div>
+      <div class="hero-stat-label">Full HD output</div>
+    </div>
+    <div>
+      <div class="hero-stat-num">SRT</div>
+      <div class="hero-stat-label">Auto subtitle</div>
+    </div>
+  </div>
+</section>
 
-<div class="form-overlay" id="overlay">
-  <div class="form-box">
-    <h3 id="form-title">Nhập thông tin</h3>
-    <input type="email" id="email" placeholder="Email của bạn (để nhận key)" required>
-    <input type="text" id="machine_id" placeholder="Machine ID (tuỳ chọn)"
-           style="font-family:monospace">
-    <p style="font-size:12px;color:#606770;margin-bottom:12px;">
-      Machine ID lấy trong phần mềm khi mở lần đầu.<br>
-      Nếu chưa có thể bỏ trống, nhập sau khi nhận key.
-    </p>
-    <button onclick="submitPayment()">💳 Thanh toán ngay</button>
-    <button class="cancel" onclick="closeForm()">Huỷ</button>
-    <div id="msg"></div>
+<!-- FEATURES -->
+<section class="section" id="features">
+  <div class="section-label">Tính năng</div>
+  <div class="section-title">MỌI THỨ BẠN CẦN<br>ĐỂ EDIT NHANH HƠN</div>
+  <p class="section-sub">Từ video gốc đến CapCut Draft hoàn chỉnh — tất cả tự động.</p>
+  <div class="features-grid">
+    <div class="feature-card" style="animation-delay:.0s">
+      <div class="feature-icon">🎞️</div>
+      <div class="feature-title">Auto-cắt clip theo SRT</div>
+      <div class="feature-desc">Đọc file subtitle .srt, tự động cắt video đúng thời điểm, không cần kéo tay từng đoạn.</div>
+    </div>
+    <div class="feature-card" style="animation-delay:.1s">
+      <div class="feature-icon">🔊</div>
+      <div class="feature-title">Ghép audio thông minh</div>
+      <div class="feature-desc">Điều chỉnh tốc độ video theo độ dài audio. Không bị lệch tiếng, không cần render lại.</div>
+    </div>
+    <div class="feature-card" style="animation-delay:.2s">
+      <div class="feature-icon">⚡</div>
+      <div class="feature-title">Compound Clip tự động</div>
+      <div class="feature-desc">Gộp tất cả clip thành Compound Clip chỉ với một tham số. Video/Audio/Mixed đều hỗ trợ.</div>
+    </div>
+    <div class="feature-card" style="animation-delay:.3s">
+      <div class="feature-icon">📱</div>
+      <div class="feature-title">Ghi thẳng vào CapCut</div>
+      <div class="feature-desc">Không cần server, không cần API. Draft xuất hiện ngay trong CapCut Projects của bạn.</div>
+    </div>
+  </div>
+</section>
+
+<!-- HOW IT WORKS -->
+<section class="section" style="padding-top:0">
+  <div class="section-label">Quy trình</div>
+  <div class="section-title">CHỈ 3 BƯỚC<br>ĐỂ CÓ DRAFT HOÀN CHỈNH</div>
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-title">Chuẩn bị file</div>
+      <div class="step-desc">Đặt video gốc, audio từng đoạn, và file subtitle .srt vào thư mục inputs</div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-title">Chạy lệnh</div>
+      <div class="step-desc">Chạy <code style="background:rgba(255,255,255,.06);padding:2px 6px;border-radius:4px;font-size:12px">python main.py</code> và chờ vài giây</div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-title">Mở CapCut</div>
+      <div class="step-desc">Draft hoàn chỉnh đã có trong CapCut Projects — chỉnh sửa thêm hoặc xuất ngay</div>
+    </div>
+  </div>
+</section>
+
+<!-- PRICING -->
+<section class="section" id="pricing" style="padding-top:0">
+  <div style="text-align:center">
+    <div class="section-label" style="text-align:center">Bảng giá</div>
+    <div class="section-title">CHỌN GÓI PHÙ HỢP</div>
+    <p style="color:var(--muted);margin-top:8px">Một lần mua, dùng trên 1 máy tính. Không tính phí ẩn.</p>
+  </div>
+  <div class="pricing-wrap">
+
+    <!-- 30 days -->
+    <div class="plan-card">
+      <div class="plan-name">Starter</div>
+      <div class="plan-price">99K <span>VND</span></div>
+      <div class="plan-period">Dùng 30 ngày</div>
+      <div class="plan-divider"></div>
+      <ul class="plan-features">
+        <li>Dùng trên 1 máy tính</li>
+        <li>Cập nhật miễn phí</li>
+        <li>Hỗ trợ qua Telegram</li>
+      </ul>
+      <button class="plan-btn default" onclick="openModal(30, 99000)">Mua gói 30 ngày</button>
+    </div>
+
+    <!-- 90 days POPULAR -->
+    <div class="plan-card popular">
+      <div class="popular-badge">Phổ biến nhất</div>
+      <div class="plan-name" style="color:var(--gold)">Creator</div>
+      <div class="plan-price">249K <span>VND</span></div>
+      <div class="plan-period">Dùng 90 ngày <span class="save-tag">Tiết kiệm 48K</span></div>
+      <div class="plan-divider" style="background:rgba(245,166,35,0.15)"></div>
+      <ul class="plan-features">
+        <li>Dùng trên 1 máy tính</li>
+        <li>Cập nhật miễn phí</li>
+        <li>Hỗ trợ qua Telegram</li>
+        <li>Ưu tiên hỗ trợ kỹ thuật</li>
+      </ul>
+      <button class="plan-btn primary" onclick="openModal(90, 249000)">Mua gói 90 ngày</button>
+    </div>
+
+    <!-- 365 days -->
+    <div class="plan-card">
+      <div class="plan-name">Pro</div>
+      <div class="plan-price">799K <span>VND</span></div>
+      <div class="plan-period">Dùng 365 ngày <span class="save-tag">Tiết kiệm 389K</span></div>
+      <div class="plan-divider"></div>
+      <ul class="plan-features">
+        <li>Dùng trên 1 máy tính</li>
+        <li>Cập nhật miễn phí</li>
+        <li>Hỗ trợ qua Telegram</li>
+        <li>Ưu tiên hỗ trợ kỹ thuật</li>
+        <li>Truy cập tính năng beta</li>
+      </ul>
+      <button class="plan-btn default" onclick="openModal(365, 799000)">Mua gói 365 ngày</button>
+    </div>
+
+  </div>
+</section>
+
+<!-- FAQ -->
+<section class="section" style="padding-top:0">
+  <div class="section-label">FAQ</div>
+  <div class="section-title">CÂU HỎI<br>THƯỜNG GẶP</div>
+  <div class="faq-list">
+    <div class="faq-item">
+      <button class="faq-q" onclick="toggleFaq(this)">
+        Phần mềm chạy trên hệ điều hành nào?
+        <span class="faq-icon">+</span>
+      </button>
+      <div class="faq-a">Hiện tại hỗ trợ Windows 10/11 (64-bit), cần cài sẵn CapCut PC và FFmpeg. MacOS đang trong quá trình phát triển.</div>
+    </div>
+    <div class="faq-item">
+      <button class="faq-q" onclick="toggleFaq(this)">
+        Sau khi mua key được gửi về đâu?
+        <span class="faq-icon">+</span>
+      </button>
+      <div class="faq-a">Key License sẽ được gửi tự động đến email bạn nhập khi thanh toán, thường trong vòng 1–2 phút sau khi thanh toán thành công. Nếu không thấy, hãy kiểm tra thư mục Spam.</div>
+    </div>
+    <div class="faq-item">
+      <button class="faq-q" onclick="toggleFaq(this)">
+        Tôi có thể dùng trên nhiều máy không?
+        <span class="faq-icon">+</span>
+      </button>
+      <div class="faq-a">Mỗi license chỉ dùng được trên 1 máy. Nếu cần chuyển sang máy khác (thay máy, cài lại Windows), vui lòng liên hệ hỗ trợ qua Telegram.</div>
+    </div>
+    <div class="faq-item">
+      <button class="faq-q" onclick="toggleFaq(this)">
+        Có hỗ trợ hoàn tiền không?
+        <span class="faq-icon">+</span>
+      </button>
+      <div class="faq-a">Chúng tôi hỗ trợ hoàn tiền trong 24 giờ đầu nếu phần mềm không chạy được trên máy bạn sau khi đã được hỗ trợ kỹ thuật. Liên hệ qua Telegram để được xử lý.</div>
+    </div>
+    <div class="faq-item">
+      <button class="faq-q" onclick="toggleFaq(this)">
+        Cần chuẩn bị gì trước khi dùng?
+        <span class="faq-icon">+</span>
+      </button>
+      <div class="faq-a">Bạn cần: (1) CapCut PC đã cài và đã mở ít nhất 1 lần, (2) FFmpeg đã thêm vào PATH, (3) Python 3.10+, (4) Video gốc + file audio từng đoạn + file .srt. Hướng dẫn cài đặt chi tiết có trong file README sau khi mua.</div>
+    </div>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <div class="footer-copy">© 2026 Auto CapCut Video Sync — All rights reserved</div>
+  <div class="footer-links">
+    <a href="https://t.me/vankhaidev" target="_blank">Telegram hỗ trợ</a>
+    <a href="#pricing">Bảng giá</a>
+  </div>
+</footer>
+
+<!-- MODAL -->
+<div class="modal-overlay" id="overlay">
+  <div class="modal">
+    <div class="modal-title" id="modal-title">MUA GÓI 90 NGÀY</div>
+    <div class="modal-sub" id="modal-sub">249,000đ — thanh toán qua PayOS</div>
+    <label>Email nhận key</label>
+    <input type="email" id="email" placeholder="example@gmail.com" autocomplete="email">
+    <label>Machine ID <span style="font-weight:400;text-transform:none;letter-spacing:0">(tuỳ chọn)</span></label>
+    <input type="text" id="machine_id" placeholder="Lấy trong phần mềm khi mở lần đầu" style="font-family:monospace">
+    <div class="modal-note">
+      🔐 Key chỉ kích hoạt được trên <strong>1 máy tính</strong>. Machine ID có thể nhập sau khi nhận key nếu bạn chưa cài phần mềm.
+    </div>
+    <button class="btn-pay" id="pay-btn" onclick="submitPayment()">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><rect x="2" y="5" width="20" height="14" rx="2" stroke="#080810" stroke-width="2"/><path d="M2 10h20" stroke="#080810" stroke-width="2"/></svg>
+      Thanh toán ngay
+    </button>
+    <button class="btn-cancel" onclick="closeModal()">Huỷ</button>
+    <div id="modal-msg"></div>
   </div>
 </div>
 
 <script>
-let selectedDays = 30;
-function openForm(days, price) {
-  selectedDays = days;
-  document.getElementById('form-title').textContent =
-    `Mua gói ${days} ngày — ${price.toLocaleString('vi')}đ`;
+let _days = 90;
+
+function openModal(days, price) {
+  _days = days;
+  const labels = {30:'STARTER — 30 NGÀY', 90:'CREATOR — 90 NGÀY', 365:'PRO — 365 NGÀY'};
+  document.getElementById('modal-title').textContent = labels[days];
+  document.getElementById('modal-sub').textContent =
+    price.toLocaleString('vi') + 'đ — thanh toán qua PayOS';
+  document.getElementById('modal-msg').textContent = '';
+  document.getElementById('modal-msg').className = '';
+  document.getElementById('email').value = '';
+  document.getElementById('machine_id').value = '';
   document.getElementById('overlay').classList.add('show');
 }
-function closeForm() {
+function closeModal() {
   document.getElementById('overlay').classList.remove('show');
 }
+document.getElementById('overlay').addEventListener('click', function(e){
+  if(e.target === this) closeModal();
+});
+
 async function submitPayment() {
   const email = document.getElementById('email').value.trim();
+  const msgEl = document.getElementById('modal-msg');
+  const btn   = document.getElementById('pay-btn');
   if (!email || !email.includes('@')) {
-    document.getElementById('msg').textContent = '⚠️ Vui lòng nhập email hợp lệ';
+    msgEl.className = 'err';
+    msgEl.textContent = '⚠ Vui lòng nhập email hợp lệ';
     return;
   }
-  document.getElementById('msg').textContent = '⏳ Đang tạo link thanh toán...';
-  const resp = await fetch('/payment/create', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, days: selectedDays })
-  });
-  const data = await resp.json();
-  if (data.checkout_url) {
-    window.location.href = data.checkout_url;
-  } else {
-    document.getElementById('msg').textContent = '❌ ' + (data.error || 'Lỗi tạo thanh toán');
+  btn.disabled = true;
+  btn.textContent = '⏳ Đang tạo link thanh toán...';
+  msgEl.textContent = '';
+  try {
+    const resp = await fetch('/payment/create', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({email, days: _days})
+    });
+    const data = await resp.json();
+    if (data.checkout_url) {
+      msgEl.className = 'ok';
+      msgEl.textContent = '✓ Đang chuyển hướng...';
+      window.location.href = data.checkout_url;
+    } else {
+      msgEl.className = 'err';
+      msgEl.textContent = '✕ ' + (data.error || 'Lỗi tạo thanh toán');
+      btn.disabled = false;
+      btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><rect x="2" y="5" width="20" height="14" rx="2" stroke="#080810" stroke-width="2"/><path d="M2 10h20" stroke="#080810" stroke-width="2"/></svg> Thanh toán ngay';
+    }
+  } catch(e) {
+    msgEl.className = 'err';
+    msgEl.textContent = '✕ Lỗi kết nối server';
+    btn.disabled = false;
+    btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><rect x="2" y="5" width="20" height="14" rx="2" stroke="#080810" stroke-width="2"/><path d="M2 10h20" stroke="#080810" stroke-width="2"/></svg> Thanh toán ngay';
   }
 }
+
+function toggleFaq(btn) {
+  const item = btn.closest('.faq-item');
+  const isOpen = item.classList.contains('open');
+  document.querySelectorAll('.faq-item.open').forEach(el => el.classList.remove('open'));
+  if (!isOpen) item.classList.add('open');
+}
+
+// Scroll reveal
+const obs = new IntersectionObserver(entries => {
+  entries.forEach(e => { if(e.isIntersecting) e.target.style.opacity = 1; });
+}, {threshold: 0.1});
+document.querySelectorAll('.feature-card').forEach(el => {
+  el.style.opacity = '0'; obs.observe(el);
+});
 </script>
 </body>
 </html>
+
 """
 
 @app.route("/")
@@ -571,32 +1144,20 @@ def _require_admin(f):
 
 @app.route("/admin/login", methods=["GET", "POST"])
 def admin_login():
-    error = ""
     if request.method == "POST":
         if request.form.get("password") == ADMIN_PASSWORD:
             session["admin"] = True
             return redirect("/admin")
-        error = "<p style='color:red;margin-top:8px;'>Sai mật khẩu!</p>"
-    return f"""
-    <html><body style="font-family:Arial;display:flex;justify-content:center;
-                       padding:80px;background:#F0F2F5;">
-    <form method="POST" style="background:white;padding:40px;
-                               border:1px solid #CCD0D5;width:300px;">
-      <h2 style="margin-bottom:20px;">Admin Login</h2>
-      <input name="password" type="password" placeholder="Mật khẩu"
-             style="width:100%;padding:10px;margin-bottom:12px;border:1px solid #CCD0D5;">
-      <button type="submit"
-              style="width:100%;padding:10px;background:#007BFF;color:white;
-                     border:none;font-weight:bold;">Đăng nhập</button>
-      {error}
+    return """
+    <html><body style="font-family:Arial;display:flex;justify-content:center;padding:80px;background:#F0F2F5;">
+    <form method="POST" style="background:white;padding:40px;border:1px solid #CCD0D5;width:300px;">
+    <h2 style="margin-bottom:20px;">Admin Login</h2>
+    <input name="password" type="password" placeholder="Mật khẩu" 
+           style="width:100%;padding:10px;margin-bottom:12px;border:1px solid #CCD0D5;">
+    <button type="submit" style="width:100%;padding:10px;background:#007BFF;color:white;border:none;font-weight:bold;">
+    Đăng nhập</button>
     </form></body></html>
     """
-
-
-@app.route("/admin/logout")
-def admin_logout():
-    session.pop("admin", None)
-    return redirect("/admin/login")
 
 
 @app.route("/admin")
@@ -609,106 +1170,57 @@ def admin_dashboard():
         orders   = conn.execute(
             "SELECT * FROM orders ORDER BY created_at DESC LIMIT 50"
         ).fetchall()
-        total    = conn.execute(
-            "SELECT COUNT(*) FROM licenses WHERE active=1"
-        ).fetchone()[0]
+        total    = conn.execute("SELECT COUNT(*) FROM licenses WHERE active=1").fetchone()[0]
         expired  = conn.execute(
             "SELECT COUNT(*) FROM licenses WHERE expire_date < date('now')"
         ).fetchone()[0]
 
     rows = "".join(
         f"<tr>"
-        f"<td style='font-family:monospace'>{r['key']}</td>"
+        f"<td>{r['key']}</td>"
         f"<td>{r['email']}</td>"
-        f"<td style='font-size:11px;font-family:monospace'>{r['machine_id'] or '—'}</td>"
+        f"<td style='font-size:11px'>{r['machine_id'] or '—'}</td>"
         f"<td>{r['days']}d</td>"
         f"<td>{r['expire_date']}</td>"
         f"<td>{'✅' if r['active'] else '❌'}</td>"
-        f"<td>"
-        f"  <a href='/admin/resend/{r['key']}' style='color:#007BFF;margin-right:8px;'>Gửi lại</a>"
-        f"  <a href='/admin/revoke/{r['key']}' style='color:#DC3545;'"
-        f"     onclick=\"return confirm('Revoke key {r['key']}?')\">Revoke</a>"
-        f"</td>"
+        f"<td><a href='/admin/revoke/{r['key']}' onclick=\"return confirm('Revoke?')\">Revoke</a></td>"
         f"</tr>"
         for r in licenses
     )
 
-    gmail_status = (
-        "✅ Đã cấu hình" if (GMAIL_USER and GMAIL_PASS)
-        else "❌ Chưa cấu hình — cần set GMAIL_USER và GMAIL_APP_PASS"
-    )
-
     return f"""
-    <html><head><title>Admin — {PRODUCT_NAME}</title>
-    <style>
-      body {{ font-family:Arial; background:#F0F2F5; }}
-      .wrap {{ max-width:1200px; margin:0 auto; padding:24px; }}
-      table {{ width:100%; border-collapse:collapse; background:white; }}
-      th,td {{ padding:8px 12px; border:1px solid #CCD0D5; font-size:13px; text-align:left; }}
-      th {{ background:#007BFF; color:white; }}
-      tr:hover {{ background:#F8F9FA; }}
-      .stats {{ display:flex; gap:16px; margin:20px 0; flex-wrap:wrap; }}
-      .stat {{ background:white; border:1px solid #CCD0D5; padding:20px 28px; border-radius:4px; }}
-      .form-row {{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; }}
-      input, select {{ padding:8px; border:1px solid #CCD0D5; font-size:14px; }}
-      .btn {{ padding:8px 20px; color:white; border:none; font-weight:bold;
-              cursor:pointer; font-size:14px; border-radius:2px; }}
-      .btn-green {{ background:#28A745; }}
-      .alert {{ padding:10px 16px; border-radius:4px; margin-bottom:16px; }}
-      .alert-warn {{ background:#FFF3CD; border-left:4px solid #FFC107; }}
-      .topbar {{ display:flex; justify-content:space-between; align-items:center;
-                 margin-bottom:8px; }}
+    <html><head><title>Admin</title>
+    <style>body{{font-family:Arial;background:#F0F2F5;}}
+    table{{width:100%;border-collapse:collapse;background:white;}}
+    th,td{{padding:8px 12px;border:1px solid #CCD0D5;font-size:13px;text-align:left;}}
+    th{{background:#007BFF;color:white;}}
+    tr:hover{{background:#F0F2F5;}}
+    .stats{{display:flex;gap:16px;margin:20px 0;}}
+    .stat{{background:white;border:1px solid #CCD0D5;padding:20px 28px;}}
     </style></head>
-    <body><div class="wrap">
-      <div class="topbar">
-        <h2>🎬 Admin Panel — {PRODUCT_NAME}</h2>
-        <a href="/admin/logout" style="color:#DC3545;font-size:13px;">Đăng xuất</a>
-      </div>
-
-      <div class="alert alert-warn">
-        📧 Gmail SMTP: <b>{gmail_status}</b>
-      </div>
-
-      <div class="stats">
-        <div class="stat">
-          <b>{total}</b><br>
-          <span style="color:#606770;font-size:13px;">Key active</span>
-        </div>
-        <div class="stat">
-          <b style="color:#DC3545">{expired}</b><br>
-          <span style="color:#606770;font-size:13px;">Key hết hạn</span>
-        </div>
-        <div class="stat">
-          <b>{len(orders)}</b><br>
-          <span style="color:#606770;font-size:13px;">Orders gần đây</span>
-        </div>
-      </div>
-
-      <h3 style="margin-bottom:12px;">Tạo key thủ công</h3>
-      <form action="/admin/create_key" method="POST"
-            style="background:white;padding:16px;border:1px solid #CCD0D5;
-                   margin-bottom:24px;border-radius:4px;">
-        <div class="form-row">
-          <input name="email" placeholder="Email khách hàng" required style="width:240px;">
-          <select name="days">
-            <option value="30">30 ngày — 99K</option>
-            <option value="90">90 ngày — 249K</option>
-            <option value="365">365 ngày — 799K</option>
-          </select>
-          <input name="notes" placeholder="Ghi chú (tuỳ chọn)" style="width:200px;">
-          <button type="submit" class="btn btn-green">✉️ Tạo & Gửi Email</button>
-        </div>
-      </form>
-
-      <h3 style="margin-bottom:12px;">Danh sách License ({len(licenses)} gần nhất)</h3>
-      <table>
-        <tr>
-          <th>Key</th><th>Email</th><th>Machine ID</th>
-          <th>Thời hạn</th><th>Hết hạn</th><th>Active</th><th>Action</th>
-        </tr>
-        {rows}
-      </table>
-    </div></body></html>
+    <body style="padding:24px">
+    <h2>🎬 Admin Panel — {PRODUCT_NAME}</h2>
+    <div class="stats">
+      <div class="stat"><b>{total}</b><br>Key active</div>
+      <div class="stat"><b style="color:#DC3545">{expired}</b><br>Key hết hạn</div>
+      <div class="stat"><b>{len(orders)}</b><br>Orders gần đây</div>
+    </div>
+    <h3>Tạo key thủ công</h3>
+    <form action="/admin/create_key" method="POST" style="background:white;padding:16px;border:1px solid #CCD0D5;margin-bottom:20px;">
+      <input name="email" placeholder="Email" required style="padding:8px;width:220px;border:1px solid #CCD0D5;">
+      <select name="days" style="padding:8px;border:1px solid #CCD0D5;">
+        <option value="30">30 ngày</option>
+        <option value="90">90 ngày</option>
+        <option value="365">365 ngày</option>
+      </select>
+      <input name="notes" placeholder="Ghi chú" style="padding:8px;width:200px;border:1px solid #CCD0D5;">
+      <button type="submit" style="padding:8px 20px;background:#28A745;color:white;border:none;font-weight:bold;">
+      Tạo & Gửi Email</button>
+    </form>
+    <h3>Danh sách License ({len(licenses)} gần nhất)</h3>
+    <table><tr><th>Key</th><th>Email</th><th>Machine ID</th><th>Thời hạn</th>
+    <th>Hết hạn</th><th>Active</th><th>Action</th></tr>{rows}</table>
+    </body></html>
     """
 
 
@@ -720,22 +1232,8 @@ def admin_create_key():
     notes = request.form.get("notes", "")
     if not email:
         return "Thiếu email", 400
-    key  = _create_license(email, days, notes=notes)
-    sent = _send_key_email(email, key, days)
-    log.info("Admin tạo key '%s' cho %s — gửi email: %s", key, email, sent)
-    return redirect("/admin")
-
-
-@app.route("/admin/resend/<key>")
-@_require_admin
-def admin_resend(key):
-    """Gửi lại email cho một key đã tồn tại."""
-    with get_db() as conn:
-        row = conn.execute("SELECT * FROM licenses WHERE key=?", (key,)).fetchone()
-    if not row:
-        return "Key không tồn tại", 404
-    sent = _send_key_email(row["email"], row["key"], row["days"])
-    log.info("Admin gửi lại key '%s' cho %s — kết quả: %s", key, row["email"], sent)
+    key = _create_license(email, days, notes=notes)
+    _send_key_email(email, key, days)
     return redirect("/admin")
 
 
@@ -744,12 +1242,12 @@ def admin_resend(key):
 def admin_revoke(key):
     with get_db() as conn:
         conn.execute("UPDATE licenses SET active=0 WHERE key=?", (key,))
-    log.info("Admin revoke key '%s'", key)
     return redirect("/admin")
 
 
-# ── Khởi động (chỉ dùng khi chạy trực tiếp, không qua gunicorn) ──────────────
+# ── Khởi động ─────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
+    init_db()
     port = int(os.environ.get("PORT", 5000))
     log.info("Server khởi động tại port %d", port)
     app.run(host="0.0.0.0", port=port, debug=False)
