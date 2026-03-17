@@ -87,6 +87,16 @@ def init_db():
                 paid_at     TEXT DEFAULT NULL,
                 key_sent    TEXT DEFAULT NULL
             );
+            CREATE TABLE IF NOT EXISTS customers (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                email        TEXT UNIQUE NOT NULL,
+                name         TEXT DEFAULT '',
+                phone        TEXT DEFAULT '',
+                source       TEXT DEFAULT '',
+                notes        TEXT DEFAULT '',
+                created_at   TEXT NOT NULL,
+                updated_at   TEXT NOT NULL
+            );
         """)
         # Migration an toàn cho DB cũ
         for col_sql in [
@@ -103,7 +113,41 @@ def init_db():
 init_db()
 
 
-# ── Tạo key ───────────────────────────────────────────────────────────────────
+# ── Tự động tạo/cập nhật Customer khi có email mới ───────────────────────────
+def _upsert_customer(email: str, name: str = "", phone: str = "",
+                     source: str = "", notes: str = ""):
+    """
+    Tạo mới hoặc cập nhật bản ghi khách hàng theo email.
+    Không ghi đè name/phone/notes nếu đã có và tham số truyền vào rỗng.
+    """
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with get_db() as conn:
+        existing = conn.execute(
+            "SELECT * FROM customers WHERE email=?", (email,)
+        ).fetchone()
+        if not existing:
+            conn.execute(
+                "INSERT INTO customers (email, name, phone, source, notes, created_at, updated_at) "
+                "VALUES (?,?,?,?,?,?,?)",
+                (email, name, phone, source, notes, now, now),
+            )
+            log.info("Tạo customer mới: %s", email)
+        else:
+            # Chỉ cập nhật các trường không rỗng
+            updates, params = [], []
+            if name  and not existing["name"]:
+                updates.append("name=?");   params.append(name)
+            if phone and not existing["phone"]:
+                updates.append("phone=?");  params.append(phone)
+            if source and not existing["source"]:
+                updates.append("source=?"); params.append(source)
+            if notes:
+                updates.append("notes=?");  params.append(notes)
+            updates.append("updated_at=?"); params.append(now)
+            params.append(email)
+            conn.execute(
+                f"UPDATE customers SET {', '.join(updates)} WHERE email=?", params
+            )
 def _gen_key() -> str:
     chars = string.ascii_uppercase + string.digits
     while True:
@@ -810,9 +854,11 @@ def api_activate():
         return jsonify({"status": "expired", "expire": expire_date})
 
     return jsonify({
-        "status":    "ok",
-        "expire":    expire_date,
-        "days_left": days_left,
+        "status":     "ok",
+        "expire":     expire_date,
+        "days_left":  days_left,
+        "days_total": row["days"],
+        "email":      row["email"],
     })
 
 
@@ -834,7 +880,9 @@ def api_check():
         return jsonify({"status": "wrong_machine"})
     if not row["expire_date"]:
         # Chưa kích hoạt lần nào
-        return jsonify({"status": "ok", "expire": None, "days_left": row["days"]})
+        return jsonify({"status": "ok", "expire": None,
+                        "days_left": row["days"], "days_total": row["days"],
+                        "email": row["email"]})
 
     try:
         expire_dt = datetime.strptime(row["expire_date"], "%Y-%m-%d")
@@ -846,9 +894,11 @@ def api_check():
         return jsonify({"status": "expired", "expire": row["expire_date"]})
 
     return jsonify({
-        "status":    "ok",
-        "expire":    row["expire_date"],
-        "days_left": days_left,
+        "status":     "ok",
+        "expire":     row["expire_date"],
+        "days_left":  days_left,
+        "days_total": row["days"],
+        "email":      row["email"],
     })
 
 
