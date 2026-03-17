@@ -1,3 +1,22 @@
+"""
+app.py — License Server cho Auto CapCut Video Sync
+Phiên bản: Gmail API OAuth2 (thay thế SMTP bị Railway block)
+
+Cách lấy credentials:
+  1. Vào https://console.cloud.google.com → tạo project mới
+  2. APIs & Services → Enable APIs → bật "Gmail API"
+  3. APIs & Services → Credentials → Create Credentials → OAuth 2.0 Client IDs
+     → Application type: Web application
+     → Authorized redirect URIs: https://<your-railway-url>/oauth2/callback
+  4. Download JSON → lấy client_id và client_secret
+  5. Chạy lần đầu: GET /oauth2/authorize → đăng nhập Gmail → copy refresh_token
+  6. Thêm vào Railway Variables:
+       GMAIL_CLIENT_ID     = ...
+       GMAIL_CLIENT_SECRET = ...
+       GMAIL_REFRESH_TOKEN = ...
+       GMAIL_SENDER        = vankhai1234.4321@gmail.com
+"""
+
 import hmac
 import hashlib
 import json
@@ -26,9 +45,9 @@ log = logging.getLogger(__name__)
 DB_PATH        = Path(__file__).parent / "licenses.db"
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin123")
 
-# Resend API (thay thế SMTP)
+# Resend API — gửi email qua HTTP (Railway không block)
 RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "re_YTQ6GNnE_kK7TuURhfKSSCt88kDLf1tYC")
-EMAIL_FROM     = os.environ.get("EMAIL_FROM", "onboarding@resend.dev")
+EMAIL_FROM     = os.environ.get("EMAIL_FROM",     "noreply@vankhaiaistudio.com")
 
 # PayOS
 PAYOS_CLIENT_ID = os.environ.get("PAYOS_CLIENT_ID", "")
@@ -120,40 +139,45 @@ def _create_license(email: str, days: int,
     return key
 
 
-# ── Gửi email qua Resend API (HTTP) ──────────────────────────────────────────
-def _send_key_email(to_email: str, key: str, days: int) -> bool:
-    """
-    Gửi license key qua Resend HTTP API.
-    Không dùng SMTP — Railway block port 465/587.
-    """
-    if not RESEND_API_KEY:
-        log.warning("Chưa cấu hình RESEND_API_KEY — bỏ qua gửi email.")
-        return False
+# ── Gmail OAuth2 helpers ──────────────────────────────────────────────────────
 
-    subject = f"🎬 License Key {PRODUCT_NAME} của bạn"
-    html_body = f"""
-<!DOCTYPE html>
+def _gmail_get_access_token() -> str:
+    """
+    Dùng refresh_token để lấy access_token mới từ Google.
+    Gọi mỗi lần gửi email (token hết hạn sau 1 giờ).
+    Dùng HTTPS → Railway không block.
+    """
+    resp = req_lib.post(
+        "https://oauth2.googleapis.com/token",
+        data={
+            "client_id":     GMAIL_CLIENT_ID,
+            "client_secret": GMAIL_CLIENT_SECRET,
+            "refresh_token": GMAIL_REFRESH_TOKEN,
+            "grant_type":    "refresh_token",
+        },
+        timeout=10,
+    )
+    resp.raise_for_status()
+    return resp.json()["access_token"]
+
+
+def _build_email_html(key: str, days: int) -> str:
+    return f"""<!DOCTYPE html>
 <html lang="vi">
 <head><meta charset="UTF-8"></head>
 <body style="margin:0;padding:0;background:#F0F2F5;">
 <div style="font-family:'Segoe UI',Arial,sans-serif;max-width:560px;
             margin:40px auto;background:#fff;border-radius:10px;
             overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
-
-  <!-- Header -->
   <div style="background:#007BFF;padding:32px;">
     <h1 style="color:#fff;margin:0;font-size:22px;">🎬 {PRODUCT_NAME}</h1>
     <p style="color:rgba(255,255,255,0.85);margin:8px 0 0;font-size:14px;">
       Cảm ơn bạn đã tin dùng!
     </p>
   </div>
-
-  <!-- Body -->
   <div style="padding:32px;">
     <p style="color:#1C1E21;font-size:15px;margin-top:0;">Xin chào,</p>
     <p style="color:#606770;font-size:14px;">Đây là License Key của bạn:</p>
-
-    <!-- Key box -->
     <div style="background:#F0F2F5;border:2px dashed #007BFF;border-radius:8px;
                 padding:24px;text-align:center;margin:20px 0;">
       <span style="font-family:Consolas,monospace;font-size:28px;font-weight:bold;
@@ -162,8 +186,6 @@ def _send_key_email(to_email: str, key: str, days: int) -> bool:
         Thời hạn: <b>{days} ngày</b>
       </p>
     </div>
-
-    <!-- Steps -->
     <h3 style="color:#1C1E21;font-size:15px;margin-bottom:8px;">Cách kích hoạt:</h3>
     <ol style="color:#606770;font-size:14px;line-height:2;padding-left:20px;margin:0 0 20px;">
       <li>Mở phần mềm <b>{PRODUCT_NAME}</b></li>
@@ -171,8 +193,6 @@ def _send_key_email(to_email: str, key: str, days: int) -> bool:
       <li>Nhập key ở trên vào ô License Key</li>
       <li>Nhấn <b>Kích hoạt</b></li>
     </ol>
-
-    <!-- Warning -->
     <div style="background:#FFF3CD;border-left:4px solid #FFC107;
                 padding:14px 16px;border-radius:4px;margin-bottom:20px;">
       <b style="color:#856404;">⚠️ Lưu ý quan trọng:</b><br>
@@ -182,14 +202,10 @@ def _send_key_email(to_email: str, key: str, days: int) -> bool:
         Nếu cần chuyển sang máy khác, vui lòng liên hệ hỗ trợ.
       </span>
     </div>
-
     <p style="color:#606770;font-size:14px;margin:0;">
-      Hỗ trợ:
-      <a href="{SUPPORT_URL}" style="color:#007BFF;">{SUPPORT_URL}</a>
+      Hỗ trợ: <a href="{SUPPORT_URL}" style="color:#007BFF;">{SUPPORT_URL}</a>
     </p>
   </div>
-
-  <!-- Footer -->
   <div style="background:#F0F2F5;padding:16px 32px;text-align:center;">
     <p style="color:#8D949E;font-size:12px;margin:0;">
       © {datetime.now().year} {PRODUCT_NAME} — Tự động tạo bởi hệ thống
@@ -197,32 +213,146 @@ def _send_key_email(to_email: str, key: str, days: int) -> bool:
   </div>
 </div>
 </body>
-</html>
-"""
+</html>"""
+
+
+def _send_key_email(to_email: str, key: str, days: int) -> bool:
+    """
+    Gửi email qua Gmail API (OAuth2 / HTTPS).
+    Không dùng SMTP — Railway block port 465/587.
+    Không cần domain riêng — dùng tài khoản Gmail của bạn.
+    """
+    if not all([GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET,
+                GMAIL_REFRESH_TOKEN, GMAIL_SENDER]):
+        log.warning("Chưa cấu hình Gmail OAuth2 — bỏ qua gửi email.")
+        return False
+
+    import base64
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text import MIMEText
+
+    # Tạo MIME message
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = f"🎬 License Key {PRODUCT_NAME} của bạn"
+    msg["From"]    = f"{PRODUCT_NAME} <{GMAIL_SENDER}>"
+    msg["To"]      = to_email
+    msg.attach(MIMEText(_build_email_html(key, days), "html", "utf-8"))
+
+    # Encode base64url theo yêu cầu Gmail API
+    raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("utf-8")
 
     try:
+        access_token = _gmail_get_access_token()
         resp = req_lib.post(
-            "https://api.resend.com/emails",
+            f"https://gmail.googleapis.com/gmail/v1/users/{GMAIL_SENDER}/messages/send",
             headers={
-                "Authorization": f"Bearer {RESEND_API_KEY}",
+                "Authorization": f"Bearer {access_token}",
                 "Content-Type":  "application/json",
             },
-            json={
-                "from":    EMAIL_FROM,
-                "to":      [to_email],
-                "subject": subject,
-                "html":    html_body,
-            },
-            timeout=10,
+            json={"raw": raw},
+            timeout=15,
         )
-        if resp.status_code in (200, 201):
-            log.info("Đã gửi key đến %s (Resend)", to_email)
+        if resp.status_code == 200:
+            log.info("Đã gửi key đến %s (Gmail API)", to_email)
             return True
-        log.error("Resend lỗi %s: %s", resp.status_code, resp.text)
+        log.error("Gmail API lỗi %s: %s", resp.status_code, resp.text)
         return False
     except Exception as e:
         log.error("Gửi email thất bại: %s", e)
         return False
+
+
+# ── OAuth2 setup routes (chỉ dùng 1 lần để lấy refresh_token) ───────────────
+
+@app.route("/oauth2/authorize")
+def oauth2_authorize():
+    """
+    Bước 1: Redirect admin đến Google để cấp quyền Gmail.
+    Truy cập: https://<your-app>/oauth2/authorize
+    (Chỉ cần làm 1 lần duy nhất để lấy refresh_token)
+    """
+    if not GMAIL_CLIENT_ID:
+        return "Chưa cấu hình GMAIL_CLIENT_ID trong Railway Variables.", 400
+
+    from urllib.parse import urlencode
+    params = {
+        "client_id":     GMAIL_CLIENT_ID,
+        "redirect_uri":  f"{request.host_url}oauth2/callback",
+        "response_type": "code",
+        "scope":         "https://www.googleapis.com/auth/gmail.send",
+        "access_type":   "offline",
+        "prompt":        "consent",   # bắt buộc để Google trả refresh_token
+    }
+    return redirect(f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}")
+
+
+@app.route("/oauth2/callback")
+def oauth2_callback():
+    """
+    Bước 2: Google redirect về đây sau khi user đồng ý.
+    Trang này hiển thị refresh_token — copy và lưu vào Railway Variables.
+    """
+    code = request.args.get("code")
+    if not code:
+        return "Không nhận được code từ Google.", 400
+
+    resp = req_lib.post(
+        "https://oauth2.googleapis.com/token",
+        data={
+            "code":          code,
+            "client_id":     GMAIL_CLIENT_ID,
+            "client_secret": GMAIL_CLIENT_SECRET,
+            "redirect_uri":  f"{request.host_url}oauth2/callback",
+            "grant_type":    "authorization_code",
+        },
+        timeout=10,
+    )
+    result = resp.json()
+    refresh_token = result.get("refresh_token", "")
+
+    if not refresh_token:
+        return f"""
+        <h2 style="color:red">Không lấy được refresh_token!</h2>
+        <p>Response: <pre>{json.dumps(result, indent=2)}</pre></p>
+        <p>Thử lại: xóa quyền truy cập tại
+           <a href="https://myaccount.google.com/permissions">
+           myaccount.google.com/permissions</a>
+           rồi truy cập /oauth2/authorize lại.</p>
+        """, 400
+
+    return f"""
+    <!DOCTYPE html>
+    <html><head><meta charset="UTF-8">
+    <style>
+      body{{font-family:Arial,sans-serif;max-width:640px;margin:60px auto;padding:0 20px;}}
+      .box{{background:#d4edda;border:1px solid #28a745;border-radius:8px;
+           padding:24px;margin:20px 0;}}
+      code{{background:#f8f9fa;padding:12px 16px;border-radius:6px;
+            display:block;word-break:break-all;font-size:14px;
+            border:1px solid #dee2e6;margin:12px 0;}}
+      .warn{{background:#fff3cd;border:1px solid #ffc107;
+             border-radius:8px;padding:16px;margin-top:16px;}}
+    </style></head>
+    <body>
+      <h2>✅ Lấy refresh_token thành công!</h2>
+      <div class="box">
+        <b>Refresh Token:</b>
+        <code id="rt">{refresh_token}</code>
+        <button onclick="navigator.clipboard.writeText('{refresh_token}')
+          .then(()=>this.textContent='Đã copy!')">
+          Copy
+        </button>
+      </div>
+      <div class="warn">
+        <b>⚠️ Làm ngay:</b><br>
+        Vào Railway → Project → Variables → thêm:<br><br>
+        <code>GMAIL_REFRESH_TOKEN = {refresh_token}</code>
+        <code>GMAIL_SENDER = {GMAIL_SENDER or 'your@gmail.com'}</code>
+        <br>
+        Sau đó redeploy. Trang này <b>không lưu</b> token — mất trang là mất token!
+      </div>
+    </body></html>
+    """
 
 
 # ── Admin auth ────────────────────────────────────────────────────────────────
