@@ -90,8 +90,6 @@ def init_db():
             CREATE TABLE IF NOT EXISTS customers (
                 id           INTEGER PRIMARY KEY AUTOINCREMENT,
                 email        TEXT UNIQUE NOT NULL,
-                name         TEXT DEFAULT '',
-                phone        TEXT DEFAULT '',
                 source       TEXT DEFAULT '',
                 notes        TEXT DEFAULT '',
                 created_at   TEXT NOT NULL,
@@ -114,12 +112,8 @@ init_db()
 
 
 # ── Tự động tạo/cập nhật Customer khi có email mới ───────────────────────────
-def _upsert_customer(email: str, name: str = "", phone: str = "",
-                     source: str = "", notes: str = ""):
-    """
-    Tạo mới hoặc cập nhật bản ghi khách hàng theo email.
-    Không ghi đè name/phone/notes nếu đã có và tham số truyền vào rỗng.
-    """
+def _upsert_customer(email: str, source: str = "", notes: str = ""):
+    """Tạo mới hoặc cập nhật bản ghi khách hàng theo email."""
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with get_db() as conn:
         existing = conn.execute(
@@ -127,18 +121,13 @@ def _upsert_customer(email: str, name: str = "", phone: str = "",
         ).fetchone()
         if not existing:
             conn.execute(
-                "INSERT INTO customers (email, name, phone, source, notes, created_at, updated_at) "
-                "VALUES (?,?,?,?,?,?,?)",
-                (email, name, phone, source, notes, now, now),
+                "INSERT INTO customers (email, source, notes, created_at, updated_at) "
+                "VALUES (?,?,?,?,?)",
+                (email, source, notes, now, now),
             )
             log.info("Tạo customer mới: %s", email)
         else:
-            # Chỉ cập nhật các trường không rỗng
             updates, params = [], []
-            if name  and not existing["name"]:
-                updates.append("name=?");   params.append(name)
-            if phone and not existing["phone"]:
-                updates.append("phone=?");  params.append(phone)
             if source and not existing["source"]:
                 updates.append("source=?"); params.append(source)
             if notes:
@@ -189,6 +178,8 @@ def _create_license(email: str, days: int,
             (key, email, machine_id, days, now_str,
              activated_at, expire_date, order_id, notes),
         )
+    # Tự động tạo/cập nhật bản ghi khách hàng
+    _upsert_customer(email, source="license")
     log.info("Tạo key '%s' cho %s (%d ngày)%s",
              key, email, days,
              f" — pre-lock machine={machine_id}" if machine_id else "")
@@ -435,6 +426,10 @@ ADMIN_HTML = """
   <!-- Stats -->
   <div class="stats">
     <div class="stat-card">
+      <div class="stat-num">{{ stats.customers }}</div>
+      <div class="stat-label">Khách hàng</div>
+    </div>
+    <div class="stat-card">
       <div class="stat-num">{{ stats.active }}</div>
       <div class="stat-label">Key đang active</div>
     </div>
@@ -456,10 +451,10 @@ ADMIN_HTML = """
   <div class="panel">
     <h2>Tạo key thủ công</h2>
     <div class="form-row">
-      <input type="email" id="inp-email" placeholder="Email khách hàng" style="min-width:220px;flex:1;">
-      <input type="text" id="inp-machine"
+      <input type="email" id="inp-email" placeholder="Email khách hàng *" style="min-width:220px;flex:1;">
+      <input type="text"  id="inp-machine"
              placeholder="Machine ID (tuỳ chọn)"
-             style="width:230px;font-family:Consolas,monospace;font-size:13px;">
+             style="width:210px;font-family:Consolas,monospace;font-size:13px;">
       <select id="inp-days">
         <option value="30">30 ngày</option>
         <option value="90">90 ngày</option>
@@ -475,14 +470,17 @@ ADMIN_HTML = """
     <div id="msg"></div>
   </div>
 
-  <!-- Tabs: Licenses / Orders -->
+  <!-- Tabs: Licenses / Orders / Khách hàng -->
   <div class="panel">
     <div class="tab-btns">
       <button class="tab-btn active" onclick="switchTab('licenses', this)">
-        Licenses ({{ licenses|length }})
+        🔑 Licenses ({{ licenses|length }})
       </button>
       <button class="tab-btn" onclick="switchTab('orders', this)">
-        Orders ({{ orders|length }})
+        🧾 Orders ({{ orders|length }})
+      </button>
+      <button class="tab-btn" onclick="switchTab('customers', this)">
+        👥 Khách hàng ({{ customers|length }})
       </button>
     </div>
 
@@ -587,9 +585,64 @@ ADMIN_HTML = """
         </tbody>
       </table>
     </div>
-  </div>
 
-</div>
+    <!-- Tab Khách hàng -->
+    <div id="tab-customers" class="tab-content">
+
+      <!-- Thanh tìm kiếm -->
+      <div style="display:flex;gap:10px;margin-bottom:16px;align-items:center;">
+        <input type="text" id="cust-search" placeholder="🔍  Tìm theo email, tên, SĐT..."
+               oninput="filterCustomers()"
+               style="flex:1;padding:9px 14px;border:1px solid #ddd;border-radius:6px;
+                      font-size:14px;outline:none;">
+        <span id="cust-count" style="font-size:12px;color:#606770;white-space:nowrap;">
+          {{ customers|length }} khách
+        </span>
+      </div>
+
+      <table id="cust-table">
+        <thead>
+          <tr>
+            <th>Email</th><th>Nguồn</th><th>Keys</th>
+            <th>Đơn hàng</th><th>Ngày tạo</th><th>Ghi chú</th><th>Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for c in customers %}
+          <tr data-search="{{ c.email|lower }}">
+            <td><b>{{ c.email }}</b></td>
+            <td>
+              <span class="badge {{ 'badge-ok' if c.source == 'payos' else 'badge-pending' }}">
+                {{ c.source or 'manual' }}
+              </span>
+            </td>
+            <td style="text-align:center;font-weight:bold;color:#007BFF;">{{ c.key_count }}</td>
+            <td style="text-align:center;font-weight:bold;color:#28a745;">{{ c.order_count }}</td>
+            <td style="color:#606770;font-size:12px;">{{ c.created_at[:10] }}</td>
+            <td>
+              <span class="cust-notes-view-{{ c.id }}"
+                    style="color:#606770;font-size:12px;max-width:200px;
+                           display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+                {{ c.notes or '—' }}
+              </span>
+              <input class="cust-notes-edit-{{ c.id }}" type="text" value="{{ c.notes }}"
+                     style="display:none;padding:4px 8px;border:1px solid #007BFF;
+                            border-radius:4px;font-size:12px;width:180px;">
+            </td>
+            <td style="display:flex;gap:6px;">
+              <button class="btn-sm btn-primary"
+                id="cust-edit-btn-{{ c.id }}"
+                onclick="editCustomer({{ c.id }}, this)">Sửa</button>
+              <button class="btn-sm" id="cust-save-btn-{{ c.id }}"
+                style="display:none;background:#28a745;color:#fff;"
+                onclick="saveCustomer({{ c.id }}, '{{ c.email }}', this)">Lưu</button>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
 
 <script>
 function switchTab(name, btn) {
@@ -611,7 +664,7 @@ async function createKey() {
     msg.className = 'err'; msg.textContent = '❌ Vui lòng nhập email hợp lệ.'; return;
   }
   if (machineId && !/^[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(machineId)) {
-    msg.className = 'err'; msg.textContent = '❌ Machine ID sai định dạng (VD: A1B2-C3D4-E5F6-G7H8).'; return;
+    msg.className = 'err'; msg.textContent = '❌ Machine ID sai định dạng.'; return;
   }
   msg.className = 'ok'; msg.textContent = 'Đang tạo key...';
 
@@ -625,11 +678,11 @@ async function createKey() {
     if (data.status === 'ok') {
       const lockInfo = data.machine_locked
         ? `🔒 Khóa với: <b>${data.machine_locked}</b>`
-        : '🔓 Chờ kích hoạt (expire tính từ lúc KH)';
+        : '🔓 Chờ kích hoạt';
       msg.className = 'ok';
       msg.innerHTML = `✅ Key: <b class="key-mono">${data.key}</b>
         <button class="copy-btn" onclick="copyText('${data.key}')">copy</button>
-        &nbsp;|&nbsp; ${data.email_sent ? '📧 Email đã gửi.' : '⚠️ Gửi email thất bại — copy key thủ công!'}
+        &nbsp;|&nbsp; ${data.email_sent ? '📧 Email đã gửi.' : '⚠️ Gửi email thất bại — copy key!'}
         &nbsp;|&nbsp; ${lockInfo}`;
       ['inp-email','inp-machine','inp-note'].forEach(id => document.getElementById(id).value = '');
       setTimeout(() => location.reload(), 4000);
@@ -668,7 +721,48 @@ async function resetMachine(key, btn) {
   else { alert('Lỗi: ' + data.msg); btn.disabled = false; btn.textContent = 'Reset máy'; }
 }
 
-function copyText(text) {
+function filterCustomers() {
+  const q   = document.getElementById('cust-search').value.toLowerCase();
+  const rows = document.querySelectorAll('#cust-table tbody tr');
+  let visible = 0;
+  rows.forEach(row => {
+    const match = row.dataset.search.includes(q);
+    row.style.display = match ? '' : 'none';
+    if (match) visible++;
+  });
+  document.getElementById('cust-count').textContent = visible + ' khách';
+}
+
+function editCustomer(id, btn) {
+  document.querySelector(`.cust-notes-view-${id}`).style.display = 'none';
+  document.querySelector(`.cust-notes-edit-${id}`).style.display = 'inline-block';
+  btn.style.display = 'none';
+  document.getElementById(`cust-save-btn-${id}`).style.display = 'inline-block';
+}
+
+async function saveCustomer(id, email, btn) {
+  const notes = document.querySelector(`.cust-notes-edit-${id}`).value.trim();
+  btn.textContent = '...'; btn.disabled = true;
+  try {
+    const res  = await fetch('/admin/update_customer', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ email, notes })
+    });
+    const data = await res.json();
+    if (data.status === 'ok') {
+      document.querySelector(`.cust-notes-view-${id}`).textContent = notes || '—';
+      document.querySelector(`.cust-notes-view-${id}`).style.display = '';
+      document.querySelector(`.cust-notes-edit-${id}`).style.display = 'none';
+      btn.style.display = 'none';
+      document.getElementById(`cust-edit-btn-${id}`).style.display = 'inline-block';
+    } else {
+      alert('Lỗi: ' + data.msg);
+    }
+  } catch(e) { alert('Lỗi kết nối: ' + e); }
+  btn.textContent = 'Lưu'; btn.disabled = false;
+}
+
   navigator.clipboard.writeText(text).then(() => {
     if (event && event.target) {
       const t = event.target; const prev = t.textContent;
@@ -694,20 +788,36 @@ def admin_panel():
         orders = conn.execute(
             "SELECT * FROM orders ORDER BY id DESC LIMIT 200"
         ).fetchall()
-        active_count        = conn.execute(
+        # Customers kèm số key và số đơn hàng
+        raw_customers = conn.execute("""
+            SELECT c.*,
+                   COUNT(DISTINCT l.id) AS key_count,
+                   COUNT(DISTINCT o.id) AS order_count
+            FROM customers c
+            LEFT JOIN licenses l ON l.email = c.email
+            LEFT JOIN orders   o ON o.email = c.email AND o.status = 'paid'
+            GROUP BY c.id
+            ORDER BY c.created_at DESC
+            LIMIT 500
+        """).fetchall()
+
+        active_count         = conn.execute(
             "SELECT COUNT(*) FROM licenses WHERE active=1"
         ).fetchone()[0]
-        inactive_count      = conn.execute(
+        inactive_count       = conn.execute(
             "SELECT COUNT(*) FROM licenses WHERE active=0"
         ).fetchone()[0]
-        orders_paid_count   = conn.execute(
+        orders_paid_count    = conn.execute(
             "SELECT COUNT(*) FROM orders WHERE status='paid'"
         ).fetchone()[0]
         orders_pending_count = conn.execute(
             "SELECT COUNT(*) FROM orders WHERE status='pending'"
         ).fetchone()[0]
+        customers_count      = conn.execute(
+            "SELECT COUNT(*) FROM customers"
+        ).fetchone()[0]
 
-    # Tính days_left cho mỗi license
+    # Tính days_left cho licenses
     licenses = []
     for lic in raw_licenses:
         d = dict(lic)
@@ -721,7 +831,10 @@ def admin_panel():
             d["days_left"] = d.get("days", 0)
         licenses.append(d)
 
+    customers = [dict(c) for c in raw_customers]
+
     stats = {
+        "customers":      customers_count,
         "active":         active_count,
         "expired":        inactive_count,
         "orders_paid":    orders_paid_count,
@@ -730,6 +843,7 @@ def admin_panel():
     return render_template_string(ADMIN_HTML,
                                   licenses=licenses,
                                   orders=orders,
+                                  customers=customers,
                                   stats=stats)
 
 
@@ -737,9 +851,9 @@ def admin_panel():
 @admin_required
 def admin_create_key():
     data       = request.get_json(silent=True) or {}
-    email      = (data.get("email") or "").strip().lower()
+    email      = (data.get("email")      or "").strip().lower()
     days       = int(data.get("days", 30))
-    note       = (data.get("note") or "").strip()
+    note       = (data.get("note")       or "").strip()
     machine_id = (data.get("machine_id") or "").strip().upper() or None
 
     if not email or "@" not in email:
@@ -756,6 +870,8 @@ def admin_create_key():
         machine_id=machine_id,
         notes=note or "Admin tạo thủ công",
     )
+    # Lưu thông tin khách hàng
+    _upsert_customer(email, source="admin")
 
     email_sent = False
     try:
@@ -796,6 +912,34 @@ def admin_reset_machine():
             (key,)
         )
     log.info("Reset machine cho key: %s", key)
+    return jsonify({"status": "ok"})
+
+
+@app.route("/admin/update_customer", methods=["POST"])
+@admin_required
+def admin_update_customer():
+    data  = request.get_json(silent=True) or {}
+    email = (data.get("email") or "").strip().lower()
+    notes = (data.get("notes") or "").strip()
+    if not email:
+        return jsonify({"status": "error", "msg": "Thiếu email"}), 400
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with get_db() as conn:
+        existing = conn.execute(
+            "SELECT id FROM customers WHERE email=?", (email,)
+        ).fetchone()
+        if existing:
+            conn.execute(
+                "UPDATE customers SET notes=?, updated_at=? WHERE email=?",
+                (notes, now, email)
+            )
+        else:
+            conn.execute(
+                "INSERT INTO customers (email, notes, source, created_at, updated_at) "
+                "VALUES (?,?,'manual',?,?)",
+                (email, notes, now, now)
+            )
+    log.info("Cập nhật ghi chú customer: %s", email)
     return jsonify({"status": "ok"})
 
 
@@ -1018,6 +1162,8 @@ def payment_webhook():
         )
 
     _send_key_email(order["email"], key, order["days"])
+    # Cập nhật thông tin khách hàng từ order
+    _upsert_customer(order["email"], source="payos")
     return jsonify({"ok": True})
 
 
