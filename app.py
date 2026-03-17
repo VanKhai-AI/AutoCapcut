@@ -1,7 +1,19 @@
 """
-app.py — License Server cho Auto CapCut Video Sync
+server/app.py — License Server cho Auto CapCut Video Sync
 Stack: Flask + SQLite + PayOS (VN) + Gmail SMTP
-Deploy: Railway.app
+Deploy: Railway.app hoặc Render.com (miễn phí)
+
+Cài đặt:
+    pip install flask payos requests
+
+Biến môi trường cần set trên Railway/Render:
+    SECRET_KEY        — Khóa bí mật Flask
+    GMAIL_USER        — Gmail dùng để gửi key
+    GMAIL_APP_PASS    — App Password của Gmail (https://myaccount.google.com/apppasswords)
+    PAYOS_CLIENT_ID   — Lấy từ dashboard.payos.vn
+    PAYOS_API_KEY     — Lấy từ dashboard.payos.vn
+    PAYOS_CHECKSUM    — Lấy từ dashboard.payos.vn
+    ADMIN_PASSWORD    — Mật khẩu vào trang /admin
 """
 
 import hmac
@@ -19,7 +31,7 @@ from email.mime.text import MIMEText
 from functools import wraps
 from pathlib import Path
 
-from flask import Flask, request, jsonify, render_template_string, session, redirect
+from flask import Flask, request, jsonify, session, redirect
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "change_me_in_production")
@@ -38,13 +50,14 @@ PAYOS_CLIENT_ID = os.environ.get("PAYOS_CLIENT_ID", "")
 PAYOS_API_KEY   = os.environ.get("PAYOS_API_KEY", "")
 PAYOS_CHECKSUM  = os.environ.get("PAYOS_CHECKSUM", "")
 
+# Giá bán (VND)
 PRICE_30D  = 99_000
 PRICE_90D  = 249_000
 PRICE_365D = 799_000
 
 PRODUCT_NAME = "Auto CapCut Video Sync"
-SUPPORT_URL  = "https://t.me/vankhaidev"
-SHOP_URL     = "https://autocapcut-production.up.railway.app"
+SUPPORT_URL  = "https://t.me/vankhaidev"   # ← thay link hỗ trợ của bạn
+SHOP_URL     = "https://your-shop.com"     # ← thay link shop của bạn
 
 
 # ── Database ──────────────────────────────────────────────────────────────────
@@ -85,7 +98,9 @@ def init_db():
     log.info("Database khởi tạo xong: %s", DB_PATH)
 
 
-# ← Gọi init_db() ở đây để gunicorn tự chạy khi load module
+# ✅ FIX CHÍNH: Gọi init_db() ở module level
+# → gunicorn không chạy __main__ nên trước đây database không được tạo,
+#   dẫn đến lỗi "no such table" mỗi khi admin thao tác.
 init_db()
 
 
@@ -117,11 +132,12 @@ def _create_license(email: str, days: int, order_id: str = None, notes: str = ""
 
 # ── Gửi email ─────────────────────────────────────────────────────────────────
 def _send_key_email(to_email: str, key: str, days: int) -> bool:
+    """Gửi key qua Gmail SMTP."""
     if not GMAIL_USER or not GMAIL_PASS:
-        log.warning("Chưa cấu hình Gmail — bỏ qua gửi email.")
+        log.warning("Chưa cấu hình Gmail (GMAIL_USER / GMAIL_APP_PASS) — bỏ qua gửi email.")
         return False
 
-    subject   = f"🎬 License Key {PRODUCT_NAME} của bạn"
+    subject = f"🎬 License Key {PRODUCT_NAME} của bạn"
     html_body = f"""
     <div style="font-family:'Segoe UI',Arial,sans-serif;max-width:560px;margin:0 auto;background:#fff;">
         <div style="background:#007BFF;padding:28px 32px;">
@@ -131,6 +147,7 @@ def _send_key_email(to_email: str, key: str, days: int) -> bool:
         <div style="padding:32px;">
             <p style="color:#1C1E21;font-size:15px;">Xin chào,</p>
             <p style="color:#606770;">Đây là License Key của bạn:</p>
+
             <div style="background:#F0F2F5;border:2px dashed #007BFF;border-radius:4px;
                         padding:20px;text-align:center;margin:20px 0;">
                 <span style="font-family:Consolas,monospace;font-size:26px;font-weight:bold;
@@ -139,6 +156,7 @@ def _send_key_email(to_email: str, key: str, days: int) -> bool:
                     Thời hạn: <b>{days} ngày</b>
                 </p>
             </div>
+
             <h3 style="color:#1C1E21;">Cách kích hoạt:</h3>
             <ol style="color:#606770;line-height:1.8;">
                 <li>Mở phần mềm <b>{PRODUCT_NAME}</b></li>
@@ -146,23 +164,27 @@ def _send_key_email(to_email: str, key: str, days: int) -> bool:
                 <li>Nhập key ở trên vào ô License Key</li>
                 <li>Nhấn <b>Kích hoạt</b></li>
             </ol>
+
             <div style="background:#FFF3CD;border-left:4px solid #FFC107;padding:12px 16px;margin:20px 0;">
-                <b>⚠️ Lưu ý:</b> Key chỉ dùng được cho <b>1 máy tính</b>.
-                Liên hệ hỗ trợ nếu cần chuyển máy.
+                <b>⚠️ Lưu ý quan trọng:</b><br>
+                Key này chỉ dùng được cho <b>1 máy tính</b>.
+                Sau khi kích hoạt trên máy này, key sẽ bị khóa với máy đó.<br>
+                Nếu cần chuyển sang máy khác, vui lòng liên hệ hỗ trợ.
             </div>
+
             <p style="color:#606770;">
                 Hỗ trợ: <a href="{SUPPORT_URL}" style="color:#007BFF;">{SUPPORT_URL}</a>
             </p>
         </div>
         <div style="background:#F0F2F5;padding:16px 32px;text-align:center;">
             <p style="color:#8D949E;font-size:12px;margin:0;">
-                © {datetime.now().year} {PRODUCT_NAME}
+                © {datetime.now().year} {PRODUCT_NAME} — Tự động tạo bởi hệ thống
             </p>
         </div>
     </div>
     """
 
-    msg            = MIMEMultipart("alternative")
+    msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
     msg["From"]    = GMAIL_USER
     msg["To"]      = to_email
@@ -180,11 +202,12 @@ def _send_key_email(to_email: str, key: str, days: int) -> bool:
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-#  CLIENT API
+#  CLIENT API (tool gọi lên server)
 # ═════════════════════════════════════════════════════════════════════════════
 
 @app.route("/api/activate", methods=["POST"])
 def api_activate():
+    """Kích hoạt key lần đầu / xác thực."""
     data       = request.get_json(silent=True) or {}
     key        = (data.get("key") or "").strip().upper()
     machine_id = (data.get("machine_id") or "").strip()
@@ -194,7 +217,9 @@ def api_activate():
 
     with get_db() as conn:
         row = conn.execute("SELECT * FROM licenses WHERE key=?", (key,)).fetchone()
-        if not row or not row["active"]:
+        if not row:
+            return jsonify({"status": "invalid"})
+        if not row["active"]:
             return jsonify({"status": "invalid"})
 
         expire_dt = datetime.strptime(row["expire_date"], "%Y-%m-%d")
@@ -211,11 +236,16 @@ def api_activate():
         elif row["machine_id"] != machine_id:
             return jsonify({"status": "wrong_machine"})
 
-    return jsonify({"status": "ok", "expire": row["expire_date"], "days_left": days_left})
+    return jsonify({
+        "status":    "ok",
+        "expire":    row["expire_date"],
+        "days_left": days_left,
+    })
 
 
 @app.route("/api/check", methods=["POST"])
 def api_check():
+    """Kiểm tra license đang hoạt động (ping mỗi lần mở tool)."""
     data       = request.get_json(silent=True) or {}
     key        = (data.get("key") or "").strip().upper()
     machine_id = (data.get("machine_id") or "").strip()
@@ -232,7 +262,11 @@ def api_check():
         if days_left < 0:
             return jsonify({"status": "expired", "expire": row["expire_date"]})
 
-    return jsonify({"status": "ok", "expire": row["expire_date"], "days_left": days_left})
+    return jsonify({
+        "status":    "ok",
+        "expire":    row["expire_date"],
+        "days_left": days_left,
+    })
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -240,42 +274,8 @@ def api_check():
 # ═════════════════════════════════════════════════════════════════════════════
 
 def _payos_checksum(data: dict) -> str:
-    """
-    Tính checksum PayOS đúng chuẩn:
-    - Chỉ lấy các field: amount, cancelUrl, description, orderCode, returnUrl
-    - Sắp xếp theo alphabet
-    - HMAC-SHA256 với checksumKey
-    """
-    # Các field PayOS dùng để tính checksum (theo tài liệu chính thức)
-    CHECKSUM_FIELDS = ["amount", "cancelUrl", "description", "orderCode", "returnUrl"]
-    filtered = {k: data[k] for k in CHECKSUM_FIELDS if k in data}
-    sorted_str = "&".join(f"{k}={filtered[k]}" for k in sorted(filtered.keys()))
-    log.info("Checksum string: %s", sorted_str)
-    return hmac.new(
-        PAYOS_CHECKSUM.encode("utf-8"),
-        sorted_str.encode("utf-8"),
-        hashlib.sha256,
-    ).hexdigest()
-
-
-def _payos_webhook_checksum(data: dict) -> str:
-    """
-    Tính checksum cho webhook PayOS gửi về:
-    - Lấy các field trong 'data' của webhook
-    - Các field: amount, description, orderCode, reference, transactionDateTime, 
-                 paymentLinkId, code, desc, counterAccountBankId, counterAccountBankName,
-                 counterAccountName, counterAccountNumber, virtualAccountName, virtualAccountNumber
-    """
-    WEBHOOK_FIELDS = [
-        "amount", "description", "orderCode", "reference",
-        "transactionDateTime", "paymentLinkId", "code", "desc",
-        "counterAccountBankId", "counterAccountBankName",
-        "counterAccountName", "counterAccountNumber",
-        "virtualAccountName", "virtualAccountNumber"
-    ]
-    filtered = {k: data.get(k, "") for k in WEBHOOK_FIELDS if k in data}
-    sorted_str = "&".join(f"{k}={filtered[k]}" for k in sorted(filtered.keys()))
-    log.info("Webhook checksum string: %s", sorted_str)
+    """Tính checksum PayOS theo tài liệu chính thức."""
+    sorted_str = "&".join(f"{k}={v}" for k, v in sorted(data.items()))
     return hmac.new(
         PAYOS_CHECKSUM.encode("utf-8"),
         sorted_str.encode("utf-8"),
@@ -285,7 +285,12 @@ def _payos_webhook_checksum(data: dict) -> str:
 
 @app.route("/payment/create", methods=["POST"])
 def payment_create():
-    import requests as req_lib, time
+    """
+    Tạo link thanh toán PayOS.
+    Body JSON: { "email": "...", "days": 30|90|365 }
+    """
+    import requests as req_lib
+    import time
 
     data  = request.get_json(silent=True) or {}
     email = (data.get("email") or "").strip().lower()
@@ -296,13 +301,17 @@ def payment_create():
     if days not in (30, 90, 365):
         return jsonify({"error": "Gói không hợp lệ"}), 400
 
+    if not PAYOS_CLIENT_ID or not PAYOS_API_KEY or not PAYOS_CHECKSUM:
+        return jsonify({"error": "PayOS chưa được cấu hình trên server"}), 500
+
     amount_map = {30: PRICE_30D, 90: PRICE_90D, 365: PRICE_365D}
     amount     = amount_map[days]
     order_code = int(time.time() * 1000) % 9_999_999
 
     with get_db() as conn:
         conn.execute(
-            "INSERT INTO orders (order_code, email, days, amount, status, created_at) VALUES (?,?,?,?,?,?)",
+            "INSERT INTO orders (order_code, email, days, amount, status, created_at) "
+            "VALUES (?,?,?,?,?,?)",
             (str(order_code), email, days, amount, "pending",
              datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
         )
@@ -333,56 +342,30 @@ def payment_create():
         return jsonify({"error": str(e)}), 500
 
     if result.get("code") == "00":
-        return jsonify({"checkout_url": result["data"]["checkoutUrl"], "order_code": order_code})
+        return jsonify({
+            "checkout_url": result["data"]["checkoutUrl"],
+            "order_code":   order_code,
+        })
 
     return jsonify({"error": result.get("desc", "PayOS error")}), 400
 
 
 @app.route("/payment/webhook", methods=["POST"])
 def payment_webhook():
-    """
-    PayOS webhook — xử lý 2 loại:
-    1. Test webhook (PayOS bấm "Test" trên dashboard) 
-    2. Real webhook (thanh toán thật)
-    """
-    raw  = request.get_data(as_text=True)
+    """PayOS gọi vào đây sau khi thanh toán thành công."""
     data = request.get_json(silent=True) or {}
-    log.info("PayOS webhook nhận: %s", raw[:500])
+    log.info("PayOS webhook: %s", json.dumps(data, ensure_ascii=False))
 
-    # ── Trường hợp 1: PayOS gửi test webhook ─────────────────────────────────
-    # PayOS test webhook có dạng: {"code": "00", "desc": "success", "data": {...}, "signature": "..."}
-    webhook_data = data.get("data", {})
     received_sig = data.get("signature", "")
+    check_data   = {k: v for k, v in data.items() if k != "signature"}
+    expected_sig = _payos_checksum(check_data)
+    if not hmac.compare_digest(received_sig, expected_sig):
+        log.warning("Webhook checksum không hợp lệ!")
+        return jsonify({"error": "invalid signature"}), 400
 
-    if not webhook_data:
-        # Có thể PayOS gửi thẳng data không wrap
-        webhook_data = data
-        received_sig = data.get("signature", "")
-
-    # Xác minh chữ ký
-    if received_sig and PAYOS_CHECKSUM:
-        expected_sig = _payos_webhook_checksum(webhook_data)
-        log.info("Received sig : %s", received_sig)
-        log.info("Expected sig : %s", expected_sig)
-        if not hmac.compare_digest(received_sig.lower(), expected_sig.lower()):
-            log.warning("Webhook checksum không khớp — vẫn tiếp tục xử lý (log only)")
-            # Không return lỗi ngay — để PayOS test thấy 200
-
-    # ── Trường hợp 2: Xử lý thanh toán thật ─────────────────────────────────
-    order_code  = str(webhook_data.get("orderCode", data.get("orderCode", "")))
-    pay_status  = webhook_data.get("code", data.get("code", ""))
-    pay_status2 = data.get("code", "")
-
-    # PayOS trả "00" = thành công
-    is_paid = (pay_status == "00" or pay_status2 == "00")
-
-    if not is_paid:
-        log.info("Webhook: chưa thanh toán (code=%s)", pay_status)
-        return jsonify({"code": "00", "desc": "success"}), 200
-
-    if not order_code:
-        log.warning("Webhook: không có orderCode")
-        return jsonify({"code": "00", "desc": "success"}), 200
+    order_code = str(data.get("orderCode", ""))
+    if data.get("status") != "PAID":
+        return jsonify({"ok": True})
 
     with get_db() as conn:
         order = conn.execute(
@@ -391,13 +374,11 @@ def payment_webhook():
 
         if not order:
             log.warning("Không tìm thấy order: %s", order_code)
-            return jsonify({"code": "00", "desc": "success"}), 200
+            return jsonify({"ok": True})
 
         if order["status"] == "paid":
-            log.info("Order %s đã xử lý rồi", order_code)
-            return jsonify({"code": "00", "desc": "success"}), 200
+            return jsonify({"ok": True})
 
-        # Tạo key và cập nhật order
         key = _create_license(
             email=order["email"],
             days=order["days"],
@@ -408,13 +389,9 @@ def payment_webhook():
             "UPDATE orders SET status='paid', paid_at=?, key_sent=? WHERE order_code=?",
             (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), key, order_code),
         )
-        log.info("Đã tạo key %s cho order %s", key, order_code)
 
-    # Gửi email
     _send_key_email(order["email"], key, order["days"])
-
-    # PayOS yêu cầu response đúng format này
-    return jsonify({"code": "00", "desc": "success"}), 200
+    return jsonify({"ok": True})
 
 
 @app.route("/payment/success")
@@ -430,7 +407,7 @@ def payment_success():
         <h1 style="color:#28A745;">✅ Thanh toán thành công!</h1>
         <p>Key License đã được gửi đến email <b>{order['email']}</b></p>
         <p style="color:#606770;">Vui lòng kiểm tra hộp thư (kể cả thư mục Spam)</p>
-        <a href="{SUPPORT_URL}" style="color:#007BFF;">Liên hệ hỗ trợ</a>
+        <a href="{SUPPORT_URL}" style="color:#007BFF;">Liên hệ hỗ trợ nếu chưa nhận được</a>
         </body></html>
         """
     return """
@@ -468,25 +445,32 @@ SHOP_HTML = """
   .hero { background:#007BFF; color:white; padding:60px 20px; text-align:center; }
   .hero h1 { font-size:32px; margin-bottom:12px; }
   .hero p  { font-size:16px; opacity:.85; }
-  .plans { display:flex; gap:24px; justify-content:center; flex-wrap:wrap; padding:48px 20px; max-width:900px; margin:0 auto; }
-  .plan  { background:white; border:1px solid #CCD0D5; border-radius:4px; padding:32px 24px; width:240px; text-align:center; }
+  .plans { display:flex; gap:24px; justify-content:center; flex-wrap:wrap;
+           padding:48px 20px; max-width:900px; margin:0 auto; }
+  .plan  { background:white; border:1px solid #CCD0D5; border-radius:4px;
+           padding:32px 24px; width:240px; text-align:center; }
   .plan.popular { border:2px solid #007BFF; position:relative; }
-  .plan.popular::before { content:"Phổ biến nhất"; background:#007BFF; color:white; font-size:12px;
-     font-weight:bold; padding:4px 12px; position:absolute; top:-14px; left:50%; transform:translateX(-50%); }
+  .plan.popular::before { content:"Phổ biến nhất"; background:#007BFF; color:white;
+     font-size:12px; font-weight:bold; padding:4px 12px;
+     position:absolute; top:-14px; left:50%; transform:translateX(-50%); }
   .plan h2 { font-size:18px; margin-bottom:8px; }
   .plan .price { font-size:32px; font-weight:bold; color:#007BFF; margin:12px 0; }
   .plan .price span { font-size:14px; color:#606770; }
-  .plan ul { list-style:none; text-align:left; margin:16px 0; color:#606770; font-size:14px; line-height:2; }
+  .plan ul { list-style:none; text-align:left; margin:16px 0; color:#606770;
+             font-size:14px; line-height:2; }
   .plan ul li::before { content:"✓  "; color:#28A745; }
-  .plan button { background:#007BFF; color:white; border:none; padding:12px 24px; font-size:15px;
-    font-weight:bold; cursor:pointer; width:100%; margin-top:12px; }
+  .plan button { background:#007BFF; color:white; border:none; padding:12px 24px;
+    font-size:15px; font-weight:bold; cursor:pointer; width:100%; margin-top:12px; }
   .plan button:hover { background:#0056B3; }
-  .form-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.5); z-index:100; align-items:center; justify-content:center; }
+  .form-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.5);
+                  z-index:100; align-items:center; justify-content:center; }
   .form-overlay.show { display:flex; }
   .form-box { background:white; padding:32px; width:380px; border-radius:4px; }
   .form-box h3 { margin-bottom:16px; }
-  .form-box input { width:100%; padding:10px; border:1px solid #CCD0D5; font-size:14px; margin-bottom:12px; }
-  .form-box button { width:100%; background:#007BFF; color:white; border:none; padding:12px; font-size:15px; font-weight:bold; cursor:pointer; }
+  .form-box input { width:100%; padding:10px; border:1px solid #CCD0D5;
+                    font-size:14px; margin-bottom:12px; }
+  .form-box button { width:100%; background:#007BFF; color:white; border:none;
+                     padding:12px; font-size:15px; font-weight:bold; cursor:pointer; }
   .form-box .cancel { background:#E4E6EB; color:#1C1E21; margin-top:8px; }
   #msg { margin-top:12px; text-align:center; font-weight:bold; }
 </style>
@@ -496,58 +480,89 @@ SHOP_HTML = """
   <h1>🎬 Auto CapCut Video Sync</h1>
   <p>Tự động tạo draft CapCut từ video + audio + SRT — tiết kiệm hàng giờ edit</p>
 </div>
+
 <div class="plans">
   <div class="plan">
     <h2>30 Ngày</h2>
     <div class="price">99K <span>VND</span></div>
-    <ul><li>Dùng trên 1 máy</li><li>Cập nhật miễn phí</li><li>Hỗ trợ Telegram</li></ul>
-    <button onclick="openForm(30,99000)">Mua ngay</button>
+    <ul>
+      <li>Dùng trên 1 máy</li>
+      <li>Cập nhật miễn phí</li>
+      <li>Hỗ trợ Telegram</li>
+    </ul>
+    <button onclick="openForm(30, 99000)">Mua ngay</button>
   </div>
+
   <div class="plan popular">
     <h2>90 Ngày</h2>
     <div class="price">249K <span>VND</span></div>
-    <ul><li>Dùng trên 1 máy</li><li>Cập nhật miễn phí</li><li>Hỗ trợ Telegram</li><li>Tiết kiệm 48K</li></ul>
-    <button onclick="openForm(90,249000)">Mua ngay</button>
+    <ul>
+      <li>Dùng trên 1 máy</li>
+      <li>Cập nhật miễn phí</li>
+      <li>Hỗ trợ Telegram</li>
+      <li>Tiết kiệm 48K</li>
+    </ul>
+    <button onclick="openForm(90, 249000)">Mua ngay</button>
   </div>
+
   <div class="plan">
     <h2>365 Ngày</h2>
     <div class="price">799K <span>VND</span></div>
-    <ul><li>Dùng trên 1 máy</li><li>Cập nhật miễn phí</li><li>Hỗ trợ Telegram</li><li>Tiết kiệm 389K</li></ul>
-    <button onclick="openForm(365,799000)">Mua ngay</button>
+    <ul>
+      <li>Dùng trên 1 máy</li>
+      <li>Cập nhật miễn phí</li>
+      <li>Hỗ trợ Telegram</li>
+      <li>Tiết kiệm 389K</li>
+    </ul>
+    <button onclick="openForm(365, 799000)">Mua ngay</button>
   </div>
 </div>
+
 <div class="form-overlay" id="overlay">
   <div class="form-box">
     <h3 id="form-title">Nhập thông tin</h3>
     <input type="email" id="email" placeholder="Email của bạn (để nhận key)" required>
-    <input type="text" id="machine_id" placeholder="Machine ID (tuỳ chọn)" style="font-family:monospace">
+    <input type="text" id="machine_id" placeholder="Machine ID (tuỳ chọn)"
+           style="font-family:monospace">
     <p style="font-size:12px;color:#606770;margin-bottom:12px;">
-      Machine ID lấy trong phần mềm khi mở lần đầu.<br>Nếu chưa có thể bỏ trống.
+      Machine ID lấy trong phần mềm khi mở lần đầu.<br>
+      Nếu chưa có thể bỏ trống, nhập sau khi nhận key.
     </p>
     <button onclick="submitPayment()">💳 Thanh toán ngay</button>
     <button class="cancel" onclick="closeForm()">Huỷ</button>
     <div id="msg"></div>
   </div>
 </div>
+
 <script>
 let selectedDays = 30;
 function openForm(days, price) {
   selectedDays = days;
-  document.getElementById('form-title').textContent = `Mua gói ${days} ngày — ${price.toLocaleString('vi')}đ`;
+  document.getElementById('form-title').textContent =
+    `Mua gói ${days} ngày — ${price.toLocaleString('vi')}đ`;
   document.getElementById('overlay').classList.add('show');
 }
-function closeForm() { document.getElementById('overlay').classList.remove('show'); }
+function closeForm() {
+  document.getElementById('overlay').classList.remove('show');
+}
 async function submitPayment() {
   const email = document.getElementById('email').value.trim();
-  if (!email || !email.includes('@')) { document.getElementById('msg').textContent = '⚠️ Vui lòng nhập email hợp lệ'; return; }
+  if (!email || !email.includes('@')) {
+    document.getElementById('msg').textContent = '⚠️ Vui lòng nhập email hợp lệ';
+    return;
+  }
   document.getElementById('msg').textContent = '⏳ Đang tạo link thanh toán...';
   const resp = await fetch('/payment/create', {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({email, days: selectedDays})
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, days: selectedDays })
   });
   const data = await resp.json();
-  if (data.checkout_url) { window.location.href = data.checkout_url; }
-  else { document.getElementById('msg').textContent = '❌ ' + (data.error || 'Lỗi tạo thanh toán'); }
+  if (data.checkout_url) {
+    window.location.href = data.checkout_url;
+  } else {
+    document.getElementById('msg').textContent = '❌ ' + (data.error || 'Lỗi tạo thanh toán');
+  }
 }
 </script>
 </body>
@@ -574,86 +589,144 @@ def _require_admin(f):
 
 @app.route("/admin/login", methods=["GET", "POST"])
 def admin_login():
+    error = ""
     if request.method == "POST":
         if request.form.get("password") == ADMIN_PASSWORD:
             session["admin"] = True
             return redirect("/admin")
-    return """
-    <html><body style="font-family:Arial;display:flex;justify-content:center;padding:80px;background:#F0F2F5;">
-    <form method="POST" style="background:white;padding:40px;border:1px solid #CCD0D5;width:300px;">
-    <h2 style="margin-bottom:20px;">Admin Login</h2>
-    <input name="password" type="password" placeholder="Mật khẩu"
-           style="width:100%;padding:10px;margin-bottom:12px;border:1px solid #CCD0D5;">
-    <button type="submit" style="width:100%;padding:10px;background:#007BFF;color:white;border:none;font-weight:bold;">
-    Đăng nhập</button>
+        error = "<p style='color:red;margin-top:8px;'>Sai mật khẩu!</p>"
+    return f"""
+    <html><body style="font-family:Arial;display:flex;justify-content:center;
+                       padding:80px;background:#F0F2F5;">
+    <form method="POST" style="background:white;padding:40px;
+                               border:1px solid #CCD0D5;width:300px;">
+      <h2 style="margin-bottom:20px;">Admin Login</h2>
+      <input name="password" type="password" placeholder="Mật khẩu"
+             style="width:100%;padding:10px;margin-bottom:12px;border:1px solid #CCD0D5;">
+      <button type="submit"
+              style="width:100%;padding:10px;background:#007BFF;color:white;
+                     border:none;font-weight:bold;">Đăng nhập</button>
+      {error}
     </form></body></html>
     """
+
+
+@app.route("/admin/logout")
+def admin_logout():
+    session.pop("admin", None)
+    return redirect("/admin/login")
 
 
 @app.route("/admin")
 @_require_admin
 def admin_dashboard():
     with get_db() as conn:
-        licenses = conn.execute("SELECT * FROM licenses ORDER BY created_at DESC LIMIT 100").fetchall()
-        orders   = conn.execute("SELECT * FROM orders ORDER BY created_at DESC LIMIT 50").fetchall()
-        total    = conn.execute("SELECT COUNT(*) FROM licenses WHERE active=1").fetchone()[0]
-        expired  = conn.execute("SELECT COUNT(*) FROM licenses WHERE expire_date < date('now')").fetchone()[0]
+        licenses = conn.execute(
+            "SELECT * FROM licenses ORDER BY created_at DESC LIMIT 100"
+        ).fetchall()
+        orders   = conn.execute(
+            "SELECT * FROM orders ORDER BY created_at DESC LIMIT 50"
+        ).fetchall()
+        total    = conn.execute(
+            "SELECT COUNT(*) FROM licenses WHERE active=1"
+        ).fetchone()[0]
+        expired  = conn.execute(
+            "SELECT COUNT(*) FROM licenses WHERE expire_date < date('now')"
+        ).fetchone()[0]
 
     rows = "".join(
         f"<tr>"
-        f"<td>{r['key']}</td>"
+        f"<td style='font-family:monospace'>{r['key']}</td>"
         f"<td>{r['email']}</td>"
-        f"<td style='font-size:11px'>{r['machine_id'] or '—'}</td>"
+        f"<td style='font-size:11px;font-family:monospace'>{r['machine_id'] or '—'}</td>"
         f"<td>{r['days']}d</td>"
         f"<td>{r['expire_date']}</td>"
         f"<td>{'✅' if r['active'] else '❌'}</td>"
-        f"<td><a href='/admin/revoke/{r['key']}' onclick=\"return confirm('Revoke key này?')\">Revoke</a></td>"
+        f"<td>"
+        f"  <a href='/admin/resend/{r['key']}' style='color:#007BFF;margin-right:8px;'>Gửi lại</a>"
+        f"  <a href='/admin/revoke/{r['key']}' style='color:#DC3545;'"
+        f"     onclick=\"return confirm('Revoke key {r['key']}?')\">Revoke</a>"
+        f"</td>"
         f"</tr>"
         for r in licenses
+    )
+
+    gmail_status = (
+        "✅ Đã cấu hình" if (GMAIL_USER and GMAIL_PASS)
+        else "❌ Chưa cấu hình — cần set GMAIL_USER và GMAIL_APP_PASS"
     )
 
     return f"""
     <html><head><title>Admin — {PRODUCT_NAME}</title>
     <style>
-    body{{font-family:Arial;background:#F0F2F5;}}
-    table{{width:100%;border-collapse:collapse;background:white;}}
-    th,td{{padding:8px 12px;border:1px solid #CCD0D5;font-size:13px;text-align:left;}}
-    th{{background:#007BFF;color:white;}}
-    tr:hover{{background:#F0F2F5;}}
-    .stats{{display:flex;gap:16px;margin:20px 0;}}
-    .stat{{background:white;border:1px solid #CCD0D5;padding:20px 28px;border-radius:4px;}}
-    input,select{{padding:8px;border:1px solid #CCD0D5;font-size:13px;}}
+      body {{ font-family:Arial; background:#F0F2F5; }}
+      .wrap {{ max-width:1200px; margin:0 auto; padding:24px; }}
+      table {{ width:100%; border-collapse:collapse; background:white; }}
+      th,td {{ padding:8px 12px; border:1px solid #CCD0D5; font-size:13px; text-align:left; }}
+      th {{ background:#007BFF; color:white; }}
+      tr:hover {{ background:#F8F9FA; }}
+      .stats {{ display:flex; gap:16px; margin:20px 0; flex-wrap:wrap; }}
+      .stat {{ background:white; border:1px solid #CCD0D5; padding:20px 28px; border-radius:4px; }}
+      .form-row {{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; }}
+      input, select {{ padding:8px; border:1px solid #CCD0D5; font-size:14px; }}
+      .btn {{ padding:8px 20px; color:white; border:none; font-weight:bold;
+              cursor:pointer; font-size:14px; border-radius:2px; }}
+      .btn-green {{ background:#28A745; }}
+      .alert {{ padding:10px 16px; border-radius:4px; margin-bottom:16px; }}
+      .alert-warn {{ background:#FFF3CD; border-left:4px solid #FFC107; }}
+      .topbar {{ display:flex; justify-content:space-between; align-items:center;
+                 margin-bottom:8px; }}
     </style></head>
-    <body style="padding:24px">
-    <h2>🎬 Admin Panel — {PRODUCT_NAME}</h2>
-    <div class="stats">
-      <div class="stat"><b style="font-size:24px;color:#007BFF">{total}</b><br>Key active</div>
-      <div class="stat"><b style="font-size:24px;color:#DC3545">{expired}</b><br>Key hết hạn</div>
-      <div class="stat"><b style="font-size:24px;color:#28A745">{len(orders)}</b><br>Orders</div>
-    </div>
+    <body><div class="wrap">
+      <div class="topbar">
+        <h2>🎬 Admin Panel — {PRODUCT_NAME}</h2>
+        <a href="/admin/logout" style="color:#DC3545;font-size:13px;">Đăng xuất</a>
+      </div>
 
-    <h3>Tạo key thủ công</h3>
-    <form action="/admin/create_key" method="POST"
-          style="background:white;padding:16px;border:1px solid #CCD0D5;margin-bottom:24px;display:flex;gap:8px;flex-wrap:wrap;">
-      <input name="email" placeholder="Email khách hàng" required style="width:240px;">
-      <select name="days">
-        <option value="30">30 ngày — 99K</option>
-        <option value="90">90 ngày — 249K</option>
-        <option value="365">365 ngày — 799K</option>
-      </select>
-      <input name="notes" placeholder="Ghi chú (tuỳ chọn)" style="width:200px;">
-      <button type="submit"
-              style="padding:8px 20px;background:#28A745;color:white;border:none;font-weight:bold;cursor:pointer;">
-        ✅ Tạo & Gửi Email
-      </button>
-    </form>
+      <div class="alert alert-warn">
+        📧 Gmail SMTP: <b>{gmail_status}</b>
+      </div>
 
-    <h3>Danh sách License ({len(licenses)} gần nhất)</h3>
-    <table>
-      <tr><th>Key</th><th>Email</th><th>Machine ID</th><th>Thời hạn</th><th>Hết hạn</th><th>Active</th><th>Action</th></tr>
-      {rows}
-    </table>
-    </body></html>
+      <div class="stats">
+        <div class="stat">
+          <b>{total}</b><br>
+          <span style="color:#606770;font-size:13px;">Key active</span>
+        </div>
+        <div class="stat">
+          <b style="color:#DC3545">{expired}</b><br>
+          <span style="color:#606770;font-size:13px;">Key hết hạn</span>
+        </div>
+        <div class="stat">
+          <b>{len(orders)}</b><br>
+          <span style="color:#606770;font-size:13px;">Orders gần đây</span>
+        </div>
+      </div>
+
+      <h3 style="margin-bottom:12px;">Tạo key thủ công</h3>
+      <form action="/admin/create_key" method="POST"
+            style="background:white;padding:16px;border:1px solid #CCD0D5;
+                   margin-bottom:24px;border-radius:4px;">
+        <div class="form-row">
+          <input name="email" placeholder="Email khách hàng" required style="width:240px;">
+          <select name="days">
+            <option value="30">30 ngày — 99K</option>
+            <option value="90">90 ngày — 249K</option>
+            <option value="365">365 ngày — 799K</option>
+          </select>
+          <input name="notes" placeholder="Ghi chú (tuỳ chọn)" style="width:200px;">
+          <button type="submit" class="btn btn-green">✉️ Tạo & Gửi Email</button>
+        </div>
+      </form>
+
+      <h3 style="margin-bottom:12px;">Danh sách License ({len(licenses)} gần nhất)</h3>
+      <table>
+        <tr>
+          <th>Key</th><th>Email</th><th>Machine ID</th>
+          <th>Thời hạn</th><th>Hết hạn</th><th>Active</th><th>Action</th>
+        </tr>
+        {rows}
+      </table>
+    </div></body></html>
     """
 
 
@@ -665,8 +738,22 @@ def admin_create_key():
     notes = request.form.get("notes", "")
     if not email:
         return "Thiếu email", 400
-    key = _create_license(email, days, notes=notes)
-    _send_key_email(email, key, days)
+    key  = _create_license(email, days, notes=notes)
+    sent = _send_key_email(email, key, days)
+    log.info("Admin tạo key '%s' cho %s — gửi email: %s", key, email, sent)
+    return redirect("/admin")
+
+
+@app.route("/admin/resend/<key>")
+@_require_admin
+def admin_resend(key):
+    """Gửi lại email cho một key đã tồn tại."""
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM licenses WHERE key=?", (key,)).fetchone()
+    if not row:
+        return "Key không tồn tại", 404
+    sent = _send_key_email(row["email"], row["key"], row["days"])
+    log.info("Admin gửi lại key '%s' cho %s — kết quả: %s", key, row["email"], sent)
     return redirect("/admin")
 
 
@@ -675,11 +762,12 @@ def admin_create_key():
 def admin_revoke(key):
     with get_db() as conn:
         conn.execute("UPDATE licenses SET active=0 WHERE key=?", (key,))
+    log.info("Admin revoke key '%s'", key)
     return redirect("/admin")
 
 
-# ── Khởi động (dev only) ──────────────────────────────────────────────────────
+# ── Khởi động (chỉ dùng khi chạy trực tiếp, không qua gunicorn) ──────────────
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    log.info("Dev server tại port %d", port)
+    log.info("Server khởi động tại port %d", port)
     app.run(host="0.0.0.0", port=port, debug=False)
