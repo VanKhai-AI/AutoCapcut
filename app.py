@@ -763,6 +763,7 @@ async function saveCustomer(id, email, btn) {
   btn.textContent = 'Lưu'; btn.disabled = false;
 }
 
+function copyText(text) {
   navigator.clipboard.writeText(text).then(() => {
     if (event && event.target) {
       const t = event.target; const prev = t.textContent;
